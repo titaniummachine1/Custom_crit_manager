@@ -1,3 +1,15 @@
+# Custom Crit Manager
+
+This repository is a focused starting point for a custom crit manager for TF2 scripts.
+
+What I changed:
+- Removed the previous `src/` implementation and consolidated a simple starting script at `Custom_crithack.lua`.
+
+Next steps:
+- Iterate on `Custom_crithack.lua` to add controls for blocking/forcing crits and rate control.
+- Add tests, config, and CI as needed.
+
+Note: Push requires valid git credentials configured on this machine.
 ![Visitors](https://api.visitorbadge.io/api/visitors?path=https%3A%2F%2Fgithub.com%2Ftitaniummachine1%2FSwing_prediction.lua&label=Visitors&countColor=%23263759&style=plastic)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub issues](https://img.shields.io/github/issues/titaniummachine1/Swing_prediction.lua.svg)](https://github.com/titaniummachine1/Swing_prediction.lua/issues)
