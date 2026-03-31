@@ -1,10 +1,10 @@
--- Custom Crit Indicator (starting point)
--- Replaced original src/ contents with this single-file indicator
+-- Main entry (Custom Crit Indicator)
+-- This file was moved from root Custom_crithack.lua into src/ to be bundled normally.
 
 -- If you see this error
 -- 50: attempt to concatenate a nil value (field 'shots_left_till_bucket_full')
 -- It's safe to ignore!
--- I was simply caching GetWeaponData() because CreateMove updates more often than Draw
+
 local colors = {
     white = { 255, 255, 255, 255 },
     gray = { 190, 190, 190, 255 },
