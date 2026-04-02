@@ -39,7 +39,8 @@ for i = 1, #hardcoded_list do
 end
 
 local menuSettings = Config.LoadCFG(DefaultConfig.Menu, SCRIPT_CONFIG_NAME)
-local fontId = draw.CreateFont("Smallest Pixel", 11, 400, FONTFLAG_OUTLINE, 1)
+local fontId = draw.CreateFont("Smallest Pixel", 11, 400, FONTFLAG_OUTLINE)
+local barGradientMask = nil
 
 local keyRuntime = {
     wasDown = false,
@@ -214,6 +215,27 @@ local function getCenterPos(textWidth)
     return math.floor((screenWidth / 2) - (textWidth / 2))
 end
 
+local function ensureBarGradientMask()
+    if barGradientMask ~= nil then
+        return
+    end
+
+    local chars = {}
+    for i = 0, 255 do
+        local p = #chars
+        chars[p + 1] = 255
+        chars[p + 2] = 255
+        chars[p + 3] = 255
+        chars[p + 4] = i
+        chars[p + 5] = 255
+        chars[p + 6] = 255
+        chars[p + 7] = 255
+        chars[p + 8] = i
+    end
+
+    barGradientMask = draw.CreateTextureRGBA(string.char(table.unpack(chars)), 256, 2)
+end
+
 local function drawSegmentTicks(x, y, w, h, maxValue, segmentValue)
     local safeMax = maxValue
     if safeMax <= 0 then
@@ -267,6 +289,10 @@ local function drawBar(x, y, w, h, value, maxValue, color, segmentValue)
 end
 
 local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, overlayAlpha)
+    local safeX = math.floor(x)
+    local safeY = math.floor(y)
+    local safeW = math.floor(w)
+    local safeH = math.floor(h)
     local safeMax = maxValue
     if safeMax <= 0 then
         safeMax = 1
@@ -284,20 +310,20 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         costClamped = 0
     end
 
-    local currentFill = math.floor((currentClamped / safeMax) * w)
+    local currentFill = math.floor((currentClamped / safeMax) * safeW)
     local greenStartValue = currentClamped - costClamped
     if greenStartValue < 0 then
         greenStartValue = 0
     end
-    local greenStart = x + math.floor((greenStartValue / safeMax) * w)
-    local greenEnd = x + math.floor((currentClamped / safeMax) * w)
+    local greenStart = safeX + math.floor((greenStartValue / safeMax) * safeW)
+    local greenEnd = safeX + math.floor((currentClamped / safeMax) * safeW)
 
     draw.Color(40, 40, 40, 200)
-    draw.FilledRect(x, y, x + w, y + h)
+    draw.FilledRect(safeX, safeY, safeX + safeW, safeY + safeH)
 
     -- Base: current bucket in red.
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
-    draw.FilledRect(x, y, x + currentFill, y + h)
+    draw.FilledRect(safeX, safeY, safeX + currentFill, safeY + safeH)
 
     -- Overlay: crit cost (next shot) shown in green.
     if costClamped > 0 and greenStart < greenEnd then
@@ -306,12 +332,17 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
             alpha = colors.green[4]
         end
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
-        draw.FilledRect(greenStart, y, greenEnd, y + h)
+        draw.FilledRect(greenStart, safeY, greenEnd, safeY + safeH)
+    end
+
+    if barGradientMask ~= nil and currentFill > 0 then
+        draw.Color(255, 255, 255, 72)
+        draw.TexturedRect(barGradientMask, safeX, safeY, safeX + currentFill, safeY + safeH)
     end
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    draw.OutlinedRect(x, y, x + w, y + h)
-    return y + h + 5
+    draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
+    return safeY + safeH + 5
 end
 
 local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillColor)
@@ -368,6 +399,12 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
         return
     end
 
+    local safeX = math.floor(x)
+    local safeY = math.floor(y)
+    local safeW = math.floor(w)
+    local safeH = math.floor(h)
+    local lastBoundaryX = -1
+
     local prevValue = safeCurrent
     for i = 2, count do
         local nextValue = boundaryValues[i] or 0
@@ -377,23 +414,23 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
             nextValue = safeMax
         end
 
-        local segStart = x + math.floor((nextValue / safeMax) * w)
-        local segEnd = x + math.floor((prevValue / safeMax) * w)
-        if segEnd <= segStart then
+        local boundaryX = safeX + math.floor((nextValue / safeMax) * safeW)
+        local prevX = safeX + math.floor((prevValue / safeMax) * safeW)
+        if prevX <= boundaryX then
             break
         end
 
-        local alpha = 54 - ((i - 1) * 9)
-        if alpha < 10 then
-            alpha = 10
+        if boundaryX ~= lastBoundaryX then
+            local alpha = 54 - ((i - 1) * 9)
+            if alpha < 10 then
+                alpha = 10
+            end
+
+            draw.Color(255, 255, 255, alpha + 20)
+            draw.FilledRect(boundaryX, safeY + 1, boundaryX + 1, safeY + safeH - 1)
+
+            lastBoundaryX = boundaryX
         end
-
-        draw.Color(255, 255, 255, alpha)
-        draw.FilledRect(segStart, y + 1, segEnd, y + h - 1)
-
-        draw.Color(255, 255, 255, 96)
-        draw.FilledRect(segStart, y + 1, segStart + 1, y + h - 1)
-        draw.FilledRect(segEnd - 1, y + 1, segEnd, y + h - 1)
 
         prevValue = nextValue
     end
@@ -464,7 +501,7 @@ local function updateHudDrag(panelX, panelY, panelW, panelH)
     local mousePos = input.GetMousePos()
     local mouseX = mousePos[1]
     local mouseY = mousePos[2]
-    local mouseDown = input.IsButtonDown(KEY_MOUSE1 or MOUSE_LEFT or 107)
+    local mouseDown = input.IsButtonDown(MOUSE_LEFT or 107)
 
     local insidePanel = mouseX >= panelX and mouseX <= (panelX + panelW) and mouseY >= panelY and
         mouseY <= (panelY + panelH)
@@ -862,6 +899,8 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 end
 
 local function drawIndicator(localPlayer, weapon)
+    ensureBarGradientMask()
+
     if not menuSettings.Display.Enabled then
         return
     end
@@ -965,18 +1004,26 @@ local function drawIndicator(localPlayer, weapon)
         statusY = barY - rowH - 2
     end
 
+    local readyCount = math.max(0, math.floor(runtime.storedCrits or 0))
     local barStatusText = "BUILDING"
     local barStatusColor = colors.red
     if runtime.critBanned and not runtime.isCritBoosted then
         barStatusText = "CRIT BANNED"
         barStatusColor = { 150, 30, 30, 255 }
     elseif canCritNow then
-        barStatusText = "CRIT READY"
+        barStatusText = string.format("CRIT READY (%d)", readyCount)
         barStatusColor = colors.green
+    else
+        barStatusText = string.format("BUILDING (%d)", readyCount)
     end
 
     draw.Color(barStatusColor[1], barStatusColor[2], barStatusColor[3], barStatusColor[4])
     draw.Text(barX, statusY, barStatusText)
+
+    local nextCostText = string.format("NEXT: %d", math.max(0, math.floor(runtime.critCostNow or 0)))
+    local nextCostWidth = draw.GetTextSize(nextCostText)
+    draw.Color(colors.gray[1], colors.gray[2], colors.gray[3], colors.gray[4])
+    draw.Text(barX + barW - nextCostWidth, statusY, nextCostText)
 
     if menuOpen then
         local headerText = "CRIT MANAGER"
@@ -1163,6 +1210,11 @@ local function onDraw()
 end
 
 local function onUnload()
+    if barGradientMask ~= nil then
+        draw.DeleteTexture(barGradientMask)
+        barGradientMask = nil
+    end
+
     Config.CreateCFG(menuSettings, SCRIPT_CONFIG_NAME)
 end
 
