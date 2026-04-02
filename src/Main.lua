@@ -307,19 +307,6 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         draw.FilledRect(greenStart, y, greenEnd, y + h)
     end
 
-    -- Draw consistent segment dividers
-    local segmentCount = 10
-    local segmentWidth = math.floor(w / segmentCount)
-    for i = 1, segmentCount - 1 do
-        local xPos = x + (i * segmentWidth)
-        local alpha = 40
-        if (i % 5) == 0 then
-            alpha = 85
-        end
-        draw.Color(255, 255, 255, alpha)
-        draw.FilledRect(xPos - 1, y + 1, xPos, y + h - 1)
-    end
-
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
     draw.OutlinedRect(x, y, x + w, y + h)
     return y + h + 5
