@@ -264,7 +264,7 @@ local function drawBar(x, y, w, h, value, maxValue, color, segmentValue)
     return y + h + 5
 end
 
-local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, segmentValue, overlayAlpha)
+local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, storedCrits, overlayAlpha)
     local safeMax = maxValue
     if safeMax <= 0 then
         safeMax = 1
@@ -308,9 +308,11 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         draw.FilledRect(greenStart, y, x + currentFill, y + h)
     end
 
-    local fullChunkCount = math.floor(currentClamped / costClamped)
-    if costClamped > 0 and fullChunkCount > 1 then
-        for i = 1, fullChunkCount - 1 do
+    -- Draw stored crit boundaries: one for each stored crit
+    local numCrits = storedCrits or 0
+    if numCrits > 1 and costClamped > 0 then
+        for i = 1, numCrits - 1 do
+            -- Simple boundary at constant intervals (one per crit)
             local boundaryValue = currentClamped - (i * costClamped)
             if boundaryValue <= 0 then
                 break
@@ -1074,7 +1076,7 @@ local function drawIndicator(localPlayer, weapon)
                             settleValue,
                             runtime.critCostNow or 0,
                             math.max(1, math.floor(runtime.bucketMax or 1000)),
-                            math.max(1, math.floor(runtime.critCostNow or 1)),
+                            runtime.storedCrits or 0,
                             cyanAlpha
                         )
                     end
@@ -1083,11 +1085,6 @@ local function drawIndicator(localPlayer, weapon)
         end
 
         if (not runtime.readyTransitionActive) and runtime.readyTransitionPhase == 0 then
-            local availableCritChunks = 0
-            if (runtime.critCostNow or 0) > 0 then
-                availableCritChunks = math.floor((runtime.bucketCurrent or 0) / (runtime.critCostNow or 1))
-            end
-
             y = drawForcePreviewBar(
                 barX,
                 barY,
@@ -1096,7 +1093,7 @@ local function drawIndicator(localPlayer, weapon)
                 runtime.bucketCurrent or 0,
                 runtime.critCostNow or 0,
                 math.max(1, math.floor(runtime.bucketMax or 1000)),
-                math.max(1, math.floor(runtime.critCostNow or 1))
+                runtime.storedCrits or 0
             )
 
             drawStoredCritHints(
@@ -1107,7 +1104,7 @@ local function drawIndicator(localPlayer, weapon)
                 runtime.bucketCurrent or 0,
                 runtime.critCostNow or 0,
                 math.max(1, math.floor(runtime.bucketMax or 1000)),
-                availableCritChunks
+                runtime.storedCrits or 0
             )
         elseif runtime.readyTransitionPhase == 0 then
             -- No-op; drawn in transition branch above.
