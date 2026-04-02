@@ -360,30 +360,23 @@ end
 local function drawStoredCritHints(x, y, w, h, currentValue, costValue, maxValue, availableChunks)
     local safeMax = math.max(1, math.floor(maxValue or 1))
     local safeCurrent = math.max(0, math.floor(currentValue or 0))
-    local safeCost = math.max(1, math.floor(costValue or 1))
     local count = math.max(0, math.floor(availableChunks or 0))
 
-    if count <= 0 then
+    if count <= 1 then
         return
     end
 
-    if safeCost <= 0 then
-        return
-    end
+    -- Calculate fill ratio and filled width
+    local fillRatio = safeCurrent / safeMax
+    local filledWidth = fillRatio * w
 
-    for i = 2, count do
-        local segStartValue = safeCurrent - (i * safeCost)
-        local segEndValue = safeCurrent - ((i - 1) * safeCost)
-        if segEndValue <= 0 then
-            break
-        end
-        if segStartValue < 0 then
-            segStartValue = 0
-        end
+    -- Divide filled area into equal segments
+    local segmentWidth = filledWidth / count
 
-        local segStart = x + math.floor((segStartValue / safeMax) * w)
-        local segEnd = x + math.floor((segEndValue / safeMax) * w)
-        if segEnd <= segStart then
+    -- Draw boundaries between each segment
+    for i = 1, count - 1 do
+        local boundaryX = x + math.floor(i * segmentWidth)
+        if boundaryX >= x + filledWidth then
             break
         end
 
@@ -393,11 +386,7 @@ local function drawStoredCritHints(x, y, w, h, currentValue, costValue, maxValue
         end
 
         draw.Color(255, 255, 255, alpha)
-        draw.FilledRect(segStart, y + 1, segEnd, y + h - 1)
-
-        draw.Color(255, 255, 255, 96)
-        draw.FilledRect(segStart, y + 1, segStart + 1, y + h - 1)
-        draw.FilledRect(segEnd - 1, y + 1, segEnd, y + h - 1)
+        draw.FilledRect(boundaryX - 1, y + 1, boundaryX, y + h - 1)
     end
 end
 
@@ -1072,6 +1061,17 @@ local function drawIndicator(localPlayer, weapon)
                 runtime.bucketCurrent or 0,
                 runtime.critCostNow or 0,
                 math.max(1, math.floor(runtime.bucketMax or 1000))
+            )
+
+            drawStoredCritHints(
+                barX,
+                barY,
+                barW,
+                barH,
+                runtime.bucketCurrent or 0,
+                runtime.critCostNow or 0,
+                math.max(1, math.floor(runtime.bucketMax or 1000)),
+                runtime.storedCrits or 0
             )
         elseif runtime.readyTransitionPhase == 0 then
             -- No-op; drawn in transition branch above.
