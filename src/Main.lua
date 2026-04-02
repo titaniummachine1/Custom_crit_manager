@@ -1073,17 +1073,6 @@ local function drawIndicator(localPlayer, weapon)
                 runtime.critCostNow or 0,
                 math.max(1, math.floor(runtime.bucketMax or 1000))
             )
-
-            drawStoredCritHints(
-                barX,
-                barY,
-                barW,
-                barH,
-                runtime.bucketCurrent or 0,
-                runtime.critCostNow or 0,
-                math.max(1, math.floor(runtime.bucketMax or 1000)),
-                runtime.storedCrits or 0
-            )
         elseif runtime.readyTransitionPhase == 0 then
             -- No-op; drawn in transition branch above.
         end
