@@ -84,9 +84,7 @@ function MenuUI.Render(menu, runtimeState)
         TimMenu.NextLine()
         menu.Display.ShowChance = TimMenu.Checkbox("Show Chance Stats", menu.Display.ShowChance)
         TimMenu.NextLine()
-        menu.Display.X = TimMenu.Slider("Indicator X", menu.Display.X or 10, 0, 2400, 1)
-        TimMenu.NextLine()
-        menu.Display.Y = TimMenu.Slider("Indicator Y", menu.Display.Y or 350, 0, 1600, 1)
+        TimMenu.Text("Drag the indicator while menu is open to reposition it")
         TimMenu.NextLine()
 
         if runtimeState and runtimeState.lastSlotName then

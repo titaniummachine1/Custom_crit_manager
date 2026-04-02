@@ -10,8 +10,6 @@ local SCRIPT_CONFIG_NAME = "Crit_manager"
 local IN_ATTACK_CONST = IN_ATTACK or 1
 local IN_ATTACK2_CONST = IN_ATTACK2 or 2
 local TF2_SPY_CLASS = TF2_Spy or 8
-local MIN_TICKS = 1
-local MAX_TICKS = 23
 
 local colors = {
     white = { 255, 255, 255, 255 },
@@ -20,7 +18,6 @@ local colors = {
     green = { 36, 255, 122, 255 },
     blue = { 30, 139, 195, 255 },
     yellow = { 255, 255, 0, 255 },
-    darkRed = { 97, 97, 76, 255 },
     flashRed = { 255, 150, 150, 255 },
 }
 
@@ -49,6 +46,14 @@ local keyRuntime = {
     toggledOn = false,
 }
 
+local dragRuntime = {
+    active = false,
+    wasMouseDown = false,
+    offsetX = 0,
+    offsetY = 0,
+    initializedPos = false,
+}
+
 local runtime = {
     lastSlotName = "Primary",
     svAllowCrit = false,
@@ -62,6 +67,10 @@ local runtime = {
     baseCritChance = 0,
     modifiedCritChance = 0,
     observedCritChance = 0,
+    critBanThreshold = 0,
+    critBanned = false,
+    critBanDamageCurrent = 0,
+    critBanDamageGoal = 0,
     requiredDamage = 0,
     manualKeyActive = false,
     manualDecision = "idle",
@@ -73,16 +82,165 @@ local runtime = {
     bucketSpentPct = 0,
     shotsNeededForTokens = 0,
     weaponBaseDamage = 0,
+    weaponDisplayName = "Unknown",
+    serverAllowCrit = false,
+    rapidFireWeapon = false,
+    critCapPercent = 0,
+    prevCanCritNow = false,
+    readyTransitionActive = false,
+    readyTransitionStart = 0,
+    readyTransitionEnd = 0,
+    readyTransitionFrom = 0,
+    readyTransitionPhase = 0,
+    readyTransitionTarget = 0,
 }
 
 local weaponInfoCache = {}
+local weaponNameCache = {}
+
+local function getNowTime()
+    local okRealTime, realTime = pcall(function()
+        return globals.RealTime()
+    end)
+    if okRealTime and type(realTime) == "number" then
+        return realTime
+    end
+    return os.clock()
+end
+
+local function getWeaponName(any)
+    if any == nil then
+        return "Unknown"
+    end
+
+    if type(any) == "number" then
+        if weaponNameCache[any] then
+            return weaponNameCache[any]
+        end
+
+        local okItem, itemDef = pcall(function()
+            return itemschema.GetItemDefinitionByID(any)
+        end)
+        if okItem and itemDef then
+            local resolved = getWeaponName(itemDef)
+            weaponNameCache[any] = resolved
+            return resolved
+        end
+
+        return tostring(any)
+    end
+
+    local okMeta, meta = pcall(getmetatable, any)
+    if not okMeta or type(meta) ~= "table" then
+        return "Unknown"
+    end
+
+    if meta["__name"] == "Entity" then
+        local okIsWeapon, isWeapon = pcall(function()
+            return any:IsWeapon()
+        end)
+        if okIsWeapon and isWeapon then
+            local okIndex, itemIndex = pcall(function()
+                return any:GetPropInt("m_iItemDefinitionIndex")
+            end)
+            if okIndex and type(itemIndex) == "number" then
+                return getWeaponName(itemIndex)
+            end
+        end
+        return "Unknown"
+    end
+
+    if meta["__name"] == "ItemDefinition" then
+        local okId, itemId = pcall(function()
+            return any:GetID()
+        end)
+        if okId and weaponNameCache[itemId] then
+            return weaponNameCache[itemId]
+        end
+
+        local special = tostring(any):match("TF_WEAPON_[%a%A]*")
+        if special then
+            local localized = client.Localize(special)
+            if localized and localized:len() ~= 0 then
+                if okId then weaponNameCache[itemId] = localized end
+                return localized
+            end
+
+            local fallback = client.Localize(any:GetTypeName():gsub("_Type", ""))
+            if okId then weaponNameCache[itemId] = fallback end
+            return fallback
+        end
+
+        local okAttrs, attrs = pcall(function()
+            return any:GetAttributes()
+        end)
+        if okAttrs and type(attrs) == "table" then
+            for attrDef, _ in pairs(attrs) do
+                local attrName = attrDef:GetName()
+                if attrName == "paintkit_proto_def_index" or attrName == "limited quantity item" then
+                    local fallback = client.Localize(any:GetTypeName():gsub("_Type", ""))
+                    if okId then weaponNameCache[itemId] = fallback end
+                    return fallback
+                end
+            end
+        end
+
+        local translated = tostring(any:GetNameTranslated())
+        if okId then weaponNameCache[itemId] = translated end
+        return translated
+    end
+
+    return "Unknown"
+end
+
+local function isRapidFireWeapon(weapon)
+    return weapon:GetLastRapidFireCritCheckTime() > 0 or weapon:GetClass() == "CTFMinigun"
+end
+
+local function getCritCapPercent(baseChance)
+    local chance = (baseChance or 0) + 0.1
+    if chance < 0 then
+        chance = 0
+    elseif chance > 1 then
+        chance = 1
+    end
+    return chance * 100
+end
 
 local function getCenterPos(textWidth)
     local screenWidth = draw.GetScreenSize()
     return math.floor((screenWidth / 2) - (textWidth / 2))
 end
 
-local function drawBar(x, y, w, h, value, maxValue, color)
+local function drawSegmentTicks(x, y, w, h, maxValue, segmentValue)
+    local safeMax = maxValue
+    if safeMax <= 0 then
+        return
+    end
+
+    local safeSegment = segmentValue
+    if safeSegment <= 0 then
+        return
+    end
+
+    local segmentCount = math.floor(safeMax / safeSegment)
+    if segmentCount <= 1 or segmentCount > 120 then
+        return
+    end
+
+    for i = 1, segmentCount - 1 do
+        local xPos = x + math.floor((i * safeSegment / safeMax) * w)
+        local alpha = 38
+        if (i % 5) == 0 then
+            alpha = 78
+        end
+
+        draw.Color(255, 255, 255, alpha)
+        draw.FilledRect(xPos, y + 1, xPos + 1, y + h - 1)
+    end
+end
+
+local function drawBar(x, y, w, h, value, maxValue, color, segmentValue)
     local safeMax = maxValue
     if safeMax <= 0 then
         safeMax = 1
@@ -100,9 +258,165 @@ local function drawBar(x, y, w, h, value, maxValue, color)
     draw.FilledRect(x, y, x + w, y + h)
     draw.Color(color[1], color[2], color[3], color[4])
     draw.FilledRect(x, y, x + fill, y + h)
+    drawSegmentTicks(x, y, w, h, safeMax, segmentValue or 0)
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
     draw.OutlinedRect(x, y, x + w, y + h)
     return y + h + 5
+end
+
+local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, segmentValue, overlayAlpha)
+    local safeMax = maxValue
+    if safeMax <= 0 then
+        safeMax = 1
+    end
+
+    local currentClamped = currentValue
+    if currentClamped < 0 then
+        currentClamped = 0
+    elseif currentClamped > safeMax then
+        currentClamped = safeMax
+    end
+
+    local costClamped = costValue
+    if costClamped < 0 then
+        costClamped = 0
+    elseif costClamped > safeMax then
+        costClamped = safeMax
+    end
+
+    local currentFill = math.floor((currentClamped / safeMax) * w)
+    local greenStartValue = currentClamped - costClamped
+    if greenStartValue < 0 then
+        greenStartValue = 0
+    end
+    local greenStart = x + math.floor((greenStartValue / safeMax) * w)
+
+    draw.Color(40, 40, 40, 200)
+    draw.FilledRect(x, y, x + w, y + h)
+
+    -- Base: current bucket in red.
+    draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
+    draw.FilledRect(x, y, x + currentFill, y + h)
+
+    -- Overlay: crit cost chunk from the right edge backward.
+    if costClamped > 0 and currentFill > 0 then
+        local alpha = overlayAlpha
+        if type(alpha) ~= "number" then
+            alpha = colors.green[4]
+        end
+        draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
+        draw.FilledRect(greenStart, y, x + currentFill, y + h)
+    end
+
+    local fullChunkCount = math.floor(currentClamped / costClamped)
+    if costClamped > 0 and fullChunkCount > 1 then
+        for i = 1, fullChunkCount - 1 do
+            local boundaryValue = currentClamped - (i * costClamped)
+            if boundaryValue <= 0 then
+                break
+            end
+            local boundaryX = x + math.floor((boundaryValue / safeMax) * w)
+            local alpha = 92
+            if i == 1 then
+                alpha = 128
+            end
+            draw.Color(255, 255, 255, alpha)
+            draw.FilledRect(boundaryX, y + 1, boundaryX + 1, y + h - 1)
+        end
+    end
+
+    draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
+    draw.OutlinedRect(x, y, x + w, y + h)
+    return y + h + 5
+end
+
+local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillColor)
+    local segments = math.max(1, math.floor(totalSegments or 1))
+    local filled = math.floor(filledSegments or 0)
+    if filled < 0 then
+        filled = 0
+    elseif filled > segments then
+        filled = segments
+    end
+
+    draw.Color(40, 40, 40, 200)
+    draw.FilledRect(x, y, x + w, y + h)
+
+    local left = x
+    local baseWidth = math.floor(w / segments)
+    local remainder = w - (baseWidth * segments)
+
+    for i = 1, segments do
+        local segWidth = baseWidth
+        if i <= remainder then
+            segWidth = segWidth + 1
+        end
+
+        local right = left + segWidth
+        if i <= filled then
+            draw.Color(fillColor[1], fillColor[2], fillColor[3], fillColor[4])
+            draw.FilledRect(left, y, right, y + h)
+        end
+
+        if i < segments then
+            local alpha = 40
+            if (i % 5) == 0 then
+                alpha = 85
+            end
+            draw.Color(255, 255, 255, alpha)
+            draw.FilledRect(right - 1, y + 1, right, y + h - 1)
+        end
+
+        left = right
+    end
+
+    draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
+    draw.OutlinedRect(x, y, x + w, y + h)
+    return y + h + 5
+end
+
+local function drawStoredCritHints(x, y, w, h, currentValue, costValue, maxValue, availableChunks)
+    local safeMax = math.max(1, math.floor(maxValue or 1))
+    local safeCurrent = math.max(0, math.floor(currentValue or 0))
+    local safeCost = math.max(1, math.floor(costValue or 1))
+    local count = math.max(0, math.floor(availableChunks or 0))
+
+    if count <= 0 then
+        return
+    end
+
+    if safeCost <= 0 then
+        return
+    end
+
+    for i = 2, count do
+        local segStartValue = safeCurrent - (i * safeCost)
+        local segEndValue = safeCurrent - ((i - 1) * safeCost)
+        if segEndValue <= 0 then
+            break
+        end
+        if segStartValue < 0 then
+            segStartValue = 0
+        end
+
+        local segStart = x + math.floor((segStartValue / safeMax) * w)
+        local segEnd = x + math.floor((segEndValue / safeMax) * w)
+        if segEnd <= segStart then
+            break
+        end
+
+        local alpha = 54 - ((i - 1) * 9)
+        if alpha < 10 then
+            alpha = 10
+        end
+
+        draw.Color(255, 255, 255, alpha)
+        draw.FilledRect(segStart, y + 1, segEnd, y + h - 1)
+
+        draw.Color(255, 255, 255, 96)
+        draw.FilledRect(segStart, y + 1, segStart + 1, y + h - 1)
+        draw.FilledRect(segEnd - 1, y + 1, segEnd, y + h - 1)
+    end
 end
 
 local function ensureMenuDefaults()
@@ -135,8 +449,73 @@ local function ensureMenuDefaults()
     end
 
     if type(menuSettings.Display) ~= "table" then
-        menuSettings.Display = { Enabled = true, X = 10, Y = 350, ShowBucket = true, ShowChance = true }
+        menuSettings.Display = { Enabled = true, X = -1, Y = -1, ShowBucket = true, ShowChance = true }
     end
+end
+
+local function ensureDisplayPosition(panelW, panelH)
+    if dragRuntime.initializedPos then
+        return
+    end
+
+    local screenW, screenH = draw.GetScreenSize()
+    local x = menuSettings.Display.X
+    local y = menuSettings.Display.Y
+
+    if type(x) ~= "number" or x < 0 then
+        x = math.floor((screenW - panelW) / 2)
+    end
+    if type(y) ~= "number" or y < 0 then
+        y = math.floor((screenH - panelH) / 2)
+    end
+
+    menuSettings.Display.X = x
+    menuSettings.Display.Y = y
+    dragRuntime.initializedPos = true
+end
+
+local function updateHudDrag(panelX, panelY, panelW, panelH)
+    if not gui.IsMenuOpen() then
+        dragRuntime.active = false
+        dragRuntime.wasMouseDown = false
+        return
+    end
+
+    local mousePos = input.GetMousePos()
+    local mouseX = mousePos[1]
+    local mouseY = mousePos[2]
+    local mouseDown = input.IsButtonDown(KEY_MOUSE1 or MOUSE_LEFT or 107)
+
+    local insidePanel = mouseX >= panelX and mouseX <= (panelX + panelW) and mouseY >= panelY and
+        mouseY <= (panelY + panelH)
+
+    if mouseDown and (not dragRuntime.wasMouseDown) and insidePanel then
+        dragRuntime.active = true
+        dragRuntime.offsetX = mouseX - panelX
+        dragRuntime.offsetY = mouseY - panelY
+    end
+
+    if not mouseDown then
+        dragRuntime.active = false
+    end
+
+    if dragRuntime.active then
+        local screenW, screenH = draw.GetScreenSize()
+        local nextX = mouseX - dragRuntime.offsetX
+        local nextY = mouseY - dragRuntime.offsetY
+        local maxX = math.max(0, screenW - panelW)
+        local maxY = math.max(0, screenH - panelH)
+
+        if nextX < 0 then nextX = 0 end
+        if nextY < 0 then nextY = 0 end
+        if nextX > maxX then nextX = maxX end
+        if nextY > maxY then nextY = maxY end
+
+        menuSettings.Display.X = math.floor(nextX)
+        menuSettings.Display.Y = math.floor(nextY)
+    end
+
+    dragRuntime.wasMouseDown = mouseDown
 end
 
 local function canFireCriticalShot(localPlayer, weapon)
@@ -293,14 +672,16 @@ local function calcWeaponInfo(weapon)
         end
     else
         for i = 0, info.shotsToFill + 1, 1 do
-            if temp < info.bucketMax then
-                temp = math.min(temp + info.addedPerShot, info.bucketMax)
-                info.costs[i] = weapon:GetCritCost(temp, info.critRequestCount + i, info.critCheckCount)
+            local critCost = weapon:GetCritCost(tempSpend, info.critRequestCount + i, info.critCheckCount)
+            info.costs[i] = critCost
+
+            if tempSpend >= critCost then
+                tempSpend = tempSpend - critCost
+                info.storedCrits = info.storedCrits + 1
             end
 
-            if tempSpend >= info.costs[i] then
-                tempSpend = tempSpend - info.costs[i]
-                info.storedCrits = info.storedCrits + 1
+            if temp < info.bucketMax then
+                temp = math.min(temp + info.addedPerShot, info.bucketMax)
             end
 
             if tempFill < info.bucketMax then
@@ -337,25 +718,57 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     local totalDamage = damageStats["total"] or 0
 
     local cmpCritChance = baseChance + 0.1
+    local critBanThreshold = cmpCritChance
+    local critBannedByChance = false
+    local critBanDamageGoal = 0
     local requiredDamage = 0
     if cmpCritChance > 0 then
         local requiredTotalDamage = (criticalDamage * (2.0 * cmpCritChance + 1.0)) / cmpCritChance / 3.0
+        critBanDamageGoal = requiredTotalDamage
         requiredDamage = requiredTotalDamage - totalDamage
+        critBannedByChance = observedChance >= cmpCritChance
     end
 
     local minStoredShots = slotSettings.MinStoredShots or 0
     local storedCrits = info.storedCrits or 0
     local usableCrits = math.max(0, storedCrits - minStoredShots)
 
+    local svAllowCrit = weapon:CanRandomCrit()
+    local serverAllowCrit = false
+    local canCriticalsMelee = client.GetConVar("tf_weapon_criticals_melee")
+    local canWeaponCriticals = client.GetConVar("tf_weapon_criticals")
+
+    if weapon:IsMeleeWeapon() then
+        if canCriticalsMelee == 2 or (canWeaponCriticals == 1 and canCriticalsMelee == 1) then
+            serverAllowCrit = true
+        end
+    elseif weapon:IsShootingWeapon() then
+        if canWeaponCriticals == 1 then
+            serverAllowCrit = true
+        end
+    end
+
+    if weapon:IsMeleeWeapon() then
+        local tfWeaponCriticalsMelee = client.GetConVar("tf_weapon_criticals_melee")
+        svAllowCrit = (svAllowCrit and tfWeaponCriticalsMelee == 1) or (tfWeaponCriticalsMelee == 2)
+    end
+
     local manualActive = false
     local manualDecision = "idle"
+    local isCritBoosted = localPlayer:IsCritBoosted() or localPlayer:InCond(TFCond_CritCola)
     if menuSettings.CritHack.Enabled then
         manualActive = isKeybindActive(menuSettings.CritHack.Keybind)
     end
 
     local attackPressed = (pCmd:GetButtons() & IN_ATTACK_CONST) ~= 0
     if manualActive and attackPressed then
-        if usableCrits <= 0 then
+        if not serverAllowCrit or not svAllowCrit then
+            pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
+            manualDecision = "blocked (crit banned)"
+        elseif critBannedByChance and not isCritBoosted then
+            pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
+            manualDecision = "blocked (crit bucket ban)"
+        elseif usableCrits <= 0 then
             pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
             manualDecision = "blocked (minimum storage)"
         else
@@ -374,15 +787,9 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
         end
     end
 
-    local svAllowCrit = weapon:CanRandomCrit()
-    if weapon:IsMeleeWeapon() then
-        local tfWeaponCriticalsMelee = client.GetConVar("tf_weapon_criticals_melee")
-        svAllowCrit = (svAllowCrit and tfWeaponCriticalsMelee == 1) or (tfWeaponCriticalsMelee == 2)
-    end
-
     runtime.lastSlotName = slotName
     runtime.svAllowCrit = svAllowCrit
-    runtime.isCritBoosted = localPlayer:IsCritBoosted() or localPlayer:InCond(TFCond_CritCola)
+    runtime.isCritBoosted = isCritBoosted
     runtime.storedCrits = storedCrits
     runtime.minStoredShots = minStoredShots
     runtime.usableCrits = usableCrits
@@ -392,6 +799,10 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     runtime.baseCritChance = baseChance * 100
     runtime.modifiedCritChance = modifiedChance * 100
     runtime.observedCritChance = observedChance * 100
+    runtime.critBanThreshold = critBanThreshold * 100
+    runtime.critBanned = critBannedByChance
+    runtime.critBanDamageCurrent = math.max(0, totalDamage)
+    runtime.critBanDamageGoal = math.max(0, critBanDamageGoal)
     runtime.requiredDamage = math.max(0, requiredDamage)
     runtime.manualKeyActive = manualActive
     runtime.manualDecision = manualDecision
@@ -428,6 +839,10 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     runtime.bucketSpentPct = bucketSpentPct
     runtime.shotsNeededForTokens = shotsNeededForTokens
     runtime.weaponBaseDamage = info.addedPerShot or 0
+    runtime.weaponDisplayName = getWeaponName(weapon)
+    runtime.serverAllowCrit = serverAllowCrit
+    runtime.rapidFireWeapon = isRapidFireWeapon(weapon)
+    runtime.critCapPercent = getCritCapPercent(baseChance)
 end
 
 local function drawIndicator(localPlayer, weapon)
@@ -444,129 +859,262 @@ local function drawIndicator(localPlayer, weapon)
     end
 
     draw.SetFont(fontId)
+    local menuOpen = gui.IsMenuOpen()
+    local panelW = 340
+    local panelH = 62
+    local panelTopOffset = 34
+    local barH = 20
+    local rowH = 11
+    local leftPad = 6
+    local rightInset = 8
+    local barW = 236
+
+    ensureDisplayPosition(barW, barH + rowH + 2)
+
     local baseX = math.floor(menuSettings.Display.X or 10)
-    local y = math.floor(menuSettings.Display.Y or 350)
-
-    local headerText = "CRIT MANAGER"
-    local headerWidth = draw.GetTextSize(headerText)
-    draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    draw.Text(getCenterPos(headerWidth), y, headerText)
-    y = y + 15
-
-    local chargedTicks = MIN_TICKS
-    local isWarping = false
-    local canDoubleTap = false
-    if warp and warp.GetChargedTicks and warp.IsWarping and warp.CanDoubleTap then
-        chargedTicks = math.max(MIN_TICKS, math.min(warp.GetChargedTicks(), MAX_TICKS))
-        isWarping = warp.IsWarping()
-        canDoubleTap = warp.CanDoubleTap(weapon)
+    local baseY = math.floor(menuSettings.Display.Y or 350)
+    if menuOpen then
+        updateHudDrag(baseX - 6, baseY - panelTopOffset, panelW + 6, panelH)
     end
 
-    local dtColor = canDoubleTap and colors.green or colors.darkRed
-    y = drawBar(baseX, y, 150, 12, chargedTicks, MAX_TICKS, dtColor)
+    baseX = math.floor(menuSettings.Display.X or 10)
+    baseY = math.floor(menuSettings.Display.Y or 350)
+    local y = baseY + 5
+    local rightX = baseX + panelW - rightInset
 
-    local statusText = string.format("%d/%d TICKS", chargedTicks, MAX_TICKS)
-    if isWarping then
-        statusText = "WARPING!"
-        draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
-    elseif canDoubleTap then
-        statusText = "DT READY!"
-        draw.Color(colors.green[1], colors.green[2], colors.green[3], colors.green[4])
+    local canCritNow = false
+    local hasBucketForCrit = (runtime.bucketCurrent or 0) >= (runtime.critCostNow or 0)
+    if runtime.isCritBoosted then
+        canCritNow = true
+    elseif runtime.serverAllowCrit and runtime.svAllowCrit and (not runtime.critBanned) and hasBucketForCrit then
+        canCritNow = true
+    end
+
+    local nowTime = getNowTime()
+    if canCritNow and (not runtime.prevCanCritNow) and (not runtime.critBanned) and (not runtime.isCritBoosted) then
+        local progressMax = math.max(1, math.floor(runtime.critCostNow or 1))
+        local progressValue = math.floor(runtime.bucketCurrent or 0)
+        local fromRatio = progressValue / progressMax
+        if fromRatio < 0 then
+            fromRatio = 0
+        elseif fromRatio > 1 then
+            fromRatio = 1
+        end
+
+        runtime.readyTransitionActive = true
+        runtime.readyTransitionPhase = 1
+        runtime.readyTransitionStart = nowTime
+        runtime.readyTransitionEnd = nowTime + 0.25
+        runtime.readyTransitionFrom = fromRatio
+        local readyTarget = (runtime.bucketCurrent or 0) / math.max(1, math.floor(runtime.bucketMax or 1000))
+        if readyTarget < 0 then
+            readyTarget = 0
+        elseif readyTarget > 1 then
+            readyTarget = 1
+        end
+        runtime.readyTransitionTarget = readyTarget
+    end
+
+    if not canCritNow then
+        runtime.readyTransitionActive = false
+        runtime.readyTransitionPhase = 0
+    end
+
+    local barX = baseX
+    local barY = baseY
+    local statusY = barY - rowH - 2
+
+    if menuOpen then
+        local panelTop = baseY - panelTopOffset
+        local panelBottom = panelTop + panelH
+
+        draw.Color(10, 10, 10, 190)
+        draw.FilledRect(baseX - 6, panelTop, baseX + panelW, panelBottom)
+        draw.Color(235, 235, 235, 170)
+        draw.OutlinedRect(baseX - 6, panelTop, baseX + panelW, panelBottom)
+
+        draw.Color(255, 255, 255, 22)
+        draw.FilledRect(baseX - 5, panelTop + 1, baseX + panelW - 1, panelTop + 11)
+        draw.Color(255, 255, 255, 44)
+        draw.FilledRect(baseX - 5, panelTop + 12, baseX + panelW - 1, panelTop + 13)
+
+        draw.Color(255, 255, 255, 160)
+        draw.Text(baseX + 205, panelTop + 4, "Drag panel")
+        y = panelTop + 4
+        statusY = barY - rowH - 2
     else
+        barX = baseX
+        barY = baseY
+        barW = 236
+        statusY = barY - rowH - 2
+    end
+
+    local barStatusText = "BUILDING"
+    local barStatusColor = colors.red
+    if runtime.critBanned and not runtime.isCritBoosted then
+        barStatusText = "CRIT BANNED"
+        barStatusColor = { 150, 30, 30, 255 }
+    elseif canCritNow then
+        barStatusText = "CRIT READY"
+        barStatusColor = colors.green
+    end
+
+    draw.Color(barStatusColor[1], barStatusColor[2], barStatusColor[3], barStatusColor[4])
+    draw.Text(barX, statusY, barStatusText)
+
+    if menuOpen then
+        local headerText = "CRIT MANAGER"
         draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    end
-    local statusWidth = draw.GetTextSize(statusText)
-    draw.Text(getCenterPos(statusWidth), y - 17, statusText)
+        draw.Text(baseX + leftPad, y, headerText)
 
-    local weaponText = "CRIT " .. (weapon:GetName() or "Unknown")
-    local weaponWidth = draw.GetTextSize(weaponText)
-    draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    draw.Text(getCenterPos(weaponWidth), y, weaponText)
-    y = y + 15
-
-    if menuSettings.Display.ShowBucket then
-        y = drawBar(baseX, y, 150, 12, math.floor(runtime.bucketCurrent or 0),
-            math.max(1, math.floor(runtime.bucketMax or 1000)),
-            colors.blue)
-        draw.Text(baseX + 45, y - 16,
-            string.format("%.0f/%.0f", runtime.bucketCurrent or 0, runtime.bucketMax or 0))
-
-        local reserveText = string.format("Stored:%d  Min:%d  Usable:%d", runtime.storedCrits or 0,
-            runtime.minStoredShots or 0, runtime.usableCrits or 0)
-        local reserveWidth = draw.GetTextSize(reserveText)
-        draw.Text(getCenterPos(reserveWidth), y)
-        y = y + 15
-
-        local forceBarColor = colors.green
-        if runtime.shotsNeededForTokens > 0 then
-            forceBarColor = colors.red
+        local critStateText = "CRITS DISABLED"
+        local critStateColor = colors.red
+        if runtime.isCritBoosted then
+            critStateText = "CRIT BOOSTED"
+            critStateColor = colors.blue
+        elseif runtime.critBanned then
+            critStateText = "CRIT BANNED"
+            critStateColor = colors.red
+        elseif runtime.serverAllowCrit and runtime.svAllowCrit then
+            critStateText = "CRITS ENABLED"
+            critStateColor = colors.green
         end
-        y = drawBar(baseX, y, 150, 8, runtime.critCostNow or 0, math.max(1, math.floor(runtime.bucketMax or 1000)),
-            forceBarColor)
 
-        if runtime.shotsNeededForTokens > 0 then
-            draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
-            draw.Text(baseX, y - 15,
-                string.format("Force cost %.0f (%.1f%%) | need %d shots", runtime.critCostNow or 0,
-                    runtime.bucketSpentPct or 0, runtime.shotsNeededForTokens or 0))
-        else
-            draw.Color(colors.green[1], colors.green[2], colors.green[3], colors.green[4])
-            draw.Text(baseX, y - 15,
-                string.format("Force cost %.0f (%.1f%%) | post-bucket %.0f", runtime.critCostNow or 0,
-                    runtime.bucketSpentPct or 0, runtime.bucketAfterForce or 0))
+        local statusWidth = draw.GetTextSize(critStateText)
+        draw.Color(critStateColor[1], critStateColor[2], critStateColor[3], critStateColor[4])
+        draw.Text(rightX - statusWidth, y, critStateText)
+        y = y + rowH
+
+        local serverText = runtime.serverAllowCrit and "Server Crits: ON" or "Server Crits: OFF"
+        local serverColor = runtime.serverAllowCrit and colors.green or colors.red
+        draw.Color(serverColor[1], serverColor[2], serverColor[3], serverColor[4])
+        draw.Text(baseX + leftPad, y, serverText)
+
+        local capText = string.format("Crit Cap: %.1f%%", runtime.critCapPercent or 0)
+        local capWidth = draw.GetTextSize(capText)
+        draw.Color(colors.gray[1], colors.gray[2], colors.gray[3], colors.gray[4])
+        draw.Text(rightX - capWidth, y, capText)
+        y = y + rowH
+    end
+
+    if runtime.critBanned and not runtime.isCritBoosted then
+        local banMax = math.max(1, math.floor(runtime.critBanDamageGoal or 1))
+        local banValue = math.min(math.floor(runtime.critBanDamageCurrent or 0), banMax)
+        local banSegmentStep = 50
+        local banTotalSegments = math.max(1, math.ceil(banMax / banSegmentStep))
+        if banTotalSegments > 48 then
+            banSegmentStep = math.max(10, math.ceil(banMax / 48))
+            banTotalSegments = math.max(1, math.ceil(banMax / banSegmentStep))
         end
-        y = y + 3
-    end
+        local banFilledSegments = math.floor(banValue / banSegmentStep)
+        y = drawSteppedBar(barX, barY, barW, barH, banFilledSegments, banTotalSegments, { 150, 30, 30, 255 })
+    elseif not canCritNow then
+        local progressMax = math.max(1, math.floor(runtime.critCostNow or 1))
+        local progressValue = math.floor(runtime.bucketCurrent or 0)
+        local perShotGain = math.max(1, (runtime.weaponBaseDamage or 1))
+        local totalShotsToCrit = math.max(1, math.ceil(progressMax / perShotGain))
+        local missingValue = progressMax - progressValue
+        if missingValue < 0 then
+            missingValue = 0
+        end
+        local remainingShots = math.max(1, math.ceil(missingValue / perShotGain))
+        local currentShotProgress = totalShotsToCrit - remainingShots
+        local shotsPerSegment = 1
 
-    if menuSettings.Display.ShowChance then
-        y = drawBar(baseX, y, 150, 12, runtime.modifiedCritChance or 0, 100, colors.yellow)
-        draw.Text(baseX + 32, y - 16,
-            string.format("Base %.1f%% | Mod %.1f%%", runtime.baseCritChance or 0, runtime.modifiedCritChance or 0))
+        if totalShotsToCrit > 48 then
+            shotsPerSegment = math.max(1, math.ceil(totalShotsToCrit / 48))
+        end
 
-        local chanceText = string.format("Observed %.1f%% | Needed dmg %.0f", runtime.observedCritChance or 0,
-            runtime.requiredDamage or 0)
-        local chanceWidth = draw.GetTextSize(chanceText)
-        draw.Text(getCenterPos(chanceWidth), y)
-        y = y + 15
-    end
-
-    local decisionText = string.format("Manual: %s | %s", runtime.manualKeyActive and "ON" or "OFF",
-        runtime.manualDecision or "idle")
-    local decisionWidth = draw.GetTextSize(decisionText)
-    draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    draw.Text(getCenterPos(decisionWidth), y)
-    y = y + 20
-
-    local seed = 0
-    if weapon.GetCurrentCritSeed then
-        seed = weapon:GetCurrentCritSeed() or 0
-    end
-
-    local seedText = string.format("Seed: %d", math.floor(seed))
-    local seedWidth = draw.GetTextSize(seedText)
-    local seedColor = colors.red
-    if seed > 200 then
-        seedColor = colors.yellow
-    elseif seed > 100 then
-        seedColor = colors.white
-    end
-    draw.Color(seedColor[1], seedColor[2], seedColor[3], seedColor[4])
-    draw.Text(getCenterPos(seedWidth), y)
-    y = y + 20
-
-    if weapon.GetRapidFireCritTime then
-        local rapidTime = weapon:GetRapidFireCritTime() or 0
-        if rapidTime > 0 then
-            local flashText = string.format("RAPID FIRE: %.1fs", rapidTime)
-            local flashWidth = draw.GetTextSize(flashText)
-            local flashColor = colors.flashRed
-            if math.sin(globals.RealTime() * 10) > 0 then
-                flashColor = colors.red
+        local totalSegments = math.max(1, math.ceil(totalShotsToCrit / shotsPerSegment))
+        local filledSegments = math.floor(currentShotProgress / shotsPerSegment)
+        y = drawSteppedBar(barX, barY, barW, barH, filledSegments, totalSegments, colors.red)
+    else
+        if runtime.readyTransitionActive then
+            if runtime.readyTransitionPhase == 1 then
+                local duration = runtime.readyTransitionEnd - runtime.readyTransitionStart
+                if duration <= 0 then
+                    runtime.readyTransitionPhase = 2
+                    runtime.readyTransitionStart = nowTime
+                    runtime.readyTransitionEnd = nowTime + 0.07
+                    runtime.readyTransitionFrom = 1
+                else
+                    local t = (nowTime - runtime.readyTransitionStart) / duration
+                    if t >= 1 then
+                        runtime.readyTransitionPhase = 2
+                        runtime.readyTransitionStart = nowTime
+                        runtime.readyTransitionEnd = nowTime + 0.07
+                        runtime.readyTransitionFrom = 1
+                    else
+                        local fillRatio = runtime.readyTransitionFrom + ((1 - runtime.readyTransitionFrom) * t)
+                        y = drawBar(barX, barY, barW, barH, fillRatio, 1, colors.red, 0)
+                    end
+                end
             end
-            draw.Color(flashColor[1], flashColor[2], flashColor[3], flashColor[4])
-            draw.Text(getCenterPos(flashWidth), y, flashText)
+
+            if runtime.readyTransitionActive and runtime.readyTransitionPhase == 2 then
+                local duration = runtime.readyTransitionEnd - runtime.readyTransitionStart
+                if duration <= 0 then
+                    runtime.readyTransitionActive = false
+                    runtime.readyTransitionPhase = 0
+                else
+                    local t = (nowTime - runtime.readyTransitionStart) / duration
+                    if t >= 1 then
+                        runtime.readyTransitionActive = false
+                        runtime.readyTransitionPhase = 0
+                    else
+                        local fillRatio = runtime.readyTransitionFrom +
+                            ((runtime.readyTransitionTarget - runtime.readyTransitionFrom) * t)
+                        local settleValue = fillRatio * math.max(1, math.floor(runtime.bucketMax or 1000))
+                        local cyanAlpha = math.floor(255 * t)
+                        y = drawForcePreviewBar(
+                            barX,
+                            barY,
+                            barW,
+                            barH,
+                            settleValue,
+                            runtime.critCostNow or 0,
+                            math.max(1, math.floor(runtime.bucketMax or 1000)),
+                            math.max(1, math.floor(runtime.critCostNow or 1)),
+                            cyanAlpha
+                        )
+                    end
+                end
+            end
+        end
+
+        if (not runtime.readyTransitionActive) and runtime.readyTransitionPhase == 0 then
+            local availableCritChunks = 0
+            if (runtime.critCostNow or 0) > 0 then
+                availableCritChunks = math.floor((runtime.bucketCurrent or 0) / (runtime.critCostNow or 1))
+            end
+
+            y = drawForcePreviewBar(
+                barX,
+                barY,
+                barW,
+                barH,
+                runtime.bucketCurrent or 0,
+                runtime.critCostNow or 0,
+                math.max(1, math.floor(runtime.bucketMax or 1000)),
+                math.max(1, math.floor(runtime.critCostNow or 1))
+            )
+
+            drawStoredCritHints(
+                barX,
+                barY,
+                barW,
+                barH,
+                runtime.bucketCurrent or 0,
+                runtime.critCostNow or 0,
+                math.max(1, math.floor(runtime.bucketMax or 1000)),
+                availableCritChunks
+            )
+        elseif runtime.readyTransitionPhase == 0 then
+            -- No-op; drawn in transition branch above.
         end
     end
+
+    runtime.prevCanCritNow = canCritNow
 end
 
 local function onCreateMove(pCmd)
@@ -594,6 +1142,7 @@ end
 
 local function onDraw()
     ensureMenuDefaults()
+    ensureDisplayPosition(236, 33)
     local localPlayer = entities.GetLocalPlayer()
     local weapon = nil
     if localPlayer and localPlayer:IsAlive() then

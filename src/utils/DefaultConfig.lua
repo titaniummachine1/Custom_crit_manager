@@ -30,8 +30,9 @@ DefaultConfig.Menu = {
 
     Display = {
         Enabled = true,
-        X = 10,
-        Y = 350,
+        -- -1 means auto-center on first load/new config.
+        X = -1,
+        Y = -1,
         ShowBucket = true,
         ShowChance = true,
     },

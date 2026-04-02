@@ -6,16 +6,9 @@
   "Lua.workspace.checkThirdParty": true,
   "files.autoSave": "onFocusChange",
   "achilleshr.runonsave": {
-    "autoSave": true,
-    "onSave": true,
-    "commands": [
-      {
-        "match": ".*\\.lua$",
-        "isAsync": false,
-        "cmd": "node \"${workspaceFolder}\\bundle-and-deploy.js\"",
-        "autoShowOutputPanel": "always"
-      }
-    ]
+    "autoSave": false,
+    "onSave": false,
+    "commands": []
   },
   "emeraldwalk.runonsave": {
     "autoSave": true,
@@ -23,7 +16,7 @@
       {
         "match": ".*\\.lua$",
         "isAsync": false,
-        "cmd": "node \"${workspaceFolder}\\bundle-and-deploy.js\"",
+        "cmd": "\"c:\\gitProjects\\Custom Crithack\\BundleAndDeploy.bat\"",
         "autoShowOutputPanel": "always"
       }
     ]
