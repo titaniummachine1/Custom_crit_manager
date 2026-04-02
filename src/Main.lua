@@ -93,6 +93,8 @@ local runtime = {
     readyTransitionFrom = 0,
     readyTransitionPhase = 0,
     readyTransitionTarget = 0,
+    critBoundaryValues = {},
+    critBoundaryCount = 0,
 }
 
 local weaponInfoCache = {}
@@ -357,26 +359,27 @@ local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillCol
     return y + h + 5
 end
 
-local function drawStoredCritHints(x, y, w, h, currentValue, costValue, maxValue, availableChunks)
+local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryValues, boundaryCount)
     local safeMax = math.max(1, math.floor(maxValue or 1))
     local safeCurrent = math.max(0, math.floor(currentValue or 0))
-    local count = math.max(0, math.floor(availableChunks or 0))
+    local count = math.max(0, math.floor(boundaryCount or 0))
 
     if count <= 1 then
         return
     end
 
-    -- Calculate fill ratio and filled width
-    local fillRatio = safeCurrent / safeMax
-    local filledWidth = fillRatio * w
+    local prevValue = safeCurrent
+    for i = 2, count do
+        local nextValue = boundaryValues[i] or 0
+        if nextValue < 0 then
+            nextValue = 0
+        elseif nextValue > safeMax then
+            nextValue = safeMax
+        end
 
-    -- Divide filled area into equal segments
-    local segmentWidth = filledWidth / count
-
-    -- Draw boundaries between each segment
-    for i = 1, count - 1 do
-        local boundaryX = x + math.floor(i * segmentWidth)
-        if boundaryX >= x + filledWidth then
+        local segStart = x + math.floor((nextValue / safeMax) * w)
+        local segEnd = x + math.floor((prevValue / safeMax) * w)
+        if segEnd <= segStart then
             break
         end
 
@@ -386,7 +389,13 @@ local function drawStoredCritHints(x, y, w, h, currentValue, costValue, maxValue
         end
 
         draw.Color(255, 255, 255, alpha)
-        draw.FilledRect(boundaryX - 1, y + 1, boundaryX, y + h - 1)
+        draw.FilledRect(segStart, y + 1, segEnd, y + h - 1)
+
+        draw.Color(255, 255, 255, 96)
+        draw.FilledRect(segStart, y + 1, segStart + 1, y + h - 1)
+        draw.FilledRect(segEnd - 1, y + 1, segEnd, y + h - 1)
+
+        prevValue = nextValue
     end
 end
 
@@ -814,6 +823,42 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     runtime.serverAllowCrit = serverAllowCrit
     runtime.rapidFireWeapon = isRapidFireWeapon(weapon)
     runtime.critCapPercent = getCritCapPercent(baseChance)
+
+    local oldBoundaryCount = runtime.critBoundaryCount or 0
+    local boundaryCount = 0
+    local simBucket = info.bucketCurrent or 0
+    local simStoredCrits = storedCrits or 0
+    local simRequestCount = info.critRequestCount or 0
+    local simCheckCount = info.critCheckCount or 0
+
+    if simBucket > 0 and simStoredCrits > 0 then
+        for i = 0, simStoredCrits - 1 do
+            local okSimCost, simCost = pcall(function()
+                return weapon:GetCritCost(simBucket, simRequestCount + i, simCheckCount)
+            end)
+            if (not okSimCost) or type(simCost) ~= "number" or simCost <= 0 then
+                break
+            end
+            if simBucket < simCost then
+                break
+            end
+
+            simBucket = simBucket - simCost
+            boundaryCount = boundaryCount + 1
+            runtime.critBoundaryValues[boundaryCount] = simBucket
+
+            if simBucket <= 0 then
+                break
+            end
+        end
+    end
+
+    if oldBoundaryCount > boundaryCount then
+        for i = boundaryCount + 1, oldBoundaryCount do
+            runtime.critBoundaryValues[i] = nil
+        end
+    end
+    runtime.critBoundaryCount = boundaryCount
 end
 
 local function drawIndicator(localPlayer, weapon)
@@ -1069,9 +1114,9 @@ local function drawIndicator(localPlayer, weapon)
                 barW,
                 barH,
                 runtime.bucketCurrent or 0,
-                runtime.critCostNow or 0,
                 math.max(1, math.floor(runtime.bucketMax or 1000)),
-                runtime.storedCrits or 0
+                runtime.critBoundaryValues,
+                runtime.critBoundaryCount or 0
             )
         elseif runtime.readyTransitionPhase == 0 then
             -- No-op; drawn in transition branch above.
