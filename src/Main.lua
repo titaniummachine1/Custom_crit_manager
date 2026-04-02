@@ -280,8 +280,6 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     local costClamped = costValue
     if costClamped < 0 then
         costClamped = 0
-    elseif costClamped > safeMax then
-        costClamped = safeMax
     end
 
     local currentFill = math.floor((currentClamped / safeMax) * w)
@@ -290,6 +288,7 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         greenStartValue = 0
     end
     local greenStart = x + math.floor((greenStartValue / safeMax) * w)
+    local greenEnd = x + math.floor((currentClamped / safeMax) * w)
 
     draw.Color(40, 40, 40, 200)
     draw.FilledRect(x, y, x + w, y + h)
@@ -299,13 +298,13 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.FilledRect(x, y, x + currentFill, y + h)
 
     -- Overlay: crit cost (next shot) shown in green.
-    if costClamped > 0 and currentFill > 0 then
+    if costClamped > 0 and greenStart < greenEnd then
         local alpha = overlayAlpha
         if type(alpha) ~= "number" then
             alpha = colors.green[4]
         end
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
-        draw.FilledRect(greenStart, y, x + currentFill, y + h)
+        draw.FilledRect(greenStart, y, greenEnd, y + h)
     end
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
