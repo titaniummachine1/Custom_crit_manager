@@ -264,7 +264,7 @@ local function drawBar(x, y, w, h, value, maxValue, color, segmentValue)
     return y + h + 5
 end
 
-local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, storedCrits, overlayAlpha)
+local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, overlayAlpha)
     local safeMax = maxValue
     if safeMax <= 0 then
         safeMax = 1
@@ -298,7 +298,7 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
     draw.FilledRect(x, y, x + currentFill, y + h)
 
-    -- Overlay: crit cost chunk from the right edge backward.
+    -- Overlay: crit cost (next shot) shown in green.
     if costClamped > 0 and currentFill > 0 then
         local alpha = overlayAlpha
         if type(alpha) ~= "number" then
@@ -306,25 +306,6 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         end
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
         draw.FilledRect(greenStart, y, x + currentFill, y + h)
-    end
-
-    -- Draw stored crit boundaries: one for each stored crit
-    local numCrits = storedCrits or 0
-    if numCrits > 1 and costClamped > 0 then
-        for i = 1, numCrits - 1 do
-            -- Simple boundary at constant intervals (one per crit)
-            local boundaryValue = currentClamped - (i * costClamped)
-            if boundaryValue <= 0 then
-                break
-            end
-            local boundaryX = x + math.floor((boundaryValue / safeMax) * w)
-            local alpha = 92
-            if i == 1 then
-                alpha = 128
-            end
-            draw.Color(255, 255, 255, alpha)
-            draw.FilledRect(boundaryX, y + 1, boundaryX + 1, y + h - 1)
-        end
     end
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
@@ -1076,7 +1057,6 @@ local function drawIndicator(localPlayer, weapon)
                             settleValue,
                             runtime.critCostNow or 0,
                             math.max(1, math.floor(runtime.bucketMax or 1000)),
-                            runtime.storedCrits or 0,
                             cyanAlpha
                         )
                     end
@@ -1092,8 +1072,7 @@ local function drawIndicator(localPlayer, weapon)
                 barH,
                 runtime.bucketCurrent or 0,
                 runtime.critCostNow or 0,
-                math.max(1, math.floor(runtime.bucketMax or 1000)),
-                runtime.storedCrits or 0
+                math.max(1, math.floor(runtime.bucketMax or 1000))
             )
 
             drawStoredCritHints(
