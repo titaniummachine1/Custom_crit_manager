@@ -236,6 +236,27 @@ local function ensureBarGradientMask()
     barGradientMask = draw.CreateTextureRGBA(string.char(table.unpack(chars)), 256, 2)
 end
 
+local function drawFillGradient(x, y, right, h)
+    if barGradientMask == nil then
+        return
+    end
+
+    local safeX = math.floor(x)
+    local safeY = math.floor(y)
+    local safeRight = math.floor(right)
+    local safeH = math.floor(h)
+
+    if safeRight <= safeX then
+        return
+    end
+
+    -- Soft cyan highlight with a subtle white sheen on top.
+    draw.Color(23, 165, 239, 48)
+    draw.TexturedRect(barGradientMask, safeX, safeY, safeRight, safeY + safeH)
+    draw.Color(255, 255, 255, 26)
+    draw.TexturedRect(barGradientMask, safeX, safeY, safeRight, safeY + safeH)
+end
+
 local function drawSegmentTicks(x, y, w, h, maxValue, segmentValue)
     local safeMax = maxValue
     if safeMax <= 0 then
@@ -277,15 +298,21 @@ local function drawBar(x, y, w, h, value, maxValue, color, segmentValue)
         clampedValue = safeMax
     end
 
-    local fill = math.floor((clampedValue / safeMax) * w)
+    local safeX = math.floor(x)
+    local safeY = math.floor(y)
+    local safeW = math.floor(w)
+    local safeH = math.floor(h)
+
+    local fill = math.floor((clampedValue / safeMax) * safeW)
     draw.Color(40, 40, 40, 200)
-    draw.FilledRect(x, y, x + w, y + h)
+    draw.FilledRect(safeX, safeY, safeX + safeW, safeY + safeH)
     draw.Color(color[1], color[2], color[3], color[4])
-    draw.FilledRect(x, y, x + fill, y + h)
-    drawSegmentTicks(x, y, w, h, safeMax, segmentValue or 0)
+    draw.FilledRect(safeX, safeY, safeX + fill, safeY + safeH)
+    drawFillGradient(safeX, safeY, safeX + fill, safeH)
+    drawSegmentTicks(safeX, safeY, safeW, safeH, safeMax, segmentValue or 0)
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    draw.OutlinedRect(x, y, x + w, y + h)
-    return y + h + 5
+    draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
+    return safeY + safeH + 5
 end
 
 local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue, overlayAlpha)
@@ -335,10 +362,7 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         draw.FilledRect(greenStart, safeY, greenEnd, safeY + safeH)
     end
 
-    if barGradientMask ~= nil and currentFill > 0 then
-        draw.Color(255, 255, 255, 72)
-        draw.TexturedRect(barGradientMask, safeX, safeY, safeX + currentFill, safeY + safeH)
-    end
+    drawFillGradient(safeX, safeY, safeX + currentFill, safeH)
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
     draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
@@ -354,12 +378,18 @@ local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillCol
         filled = segments
     end
 
-    draw.Color(40, 40, 40, 200)
-    draw.FilledRect(x, y, x + w, y + h)
+    local safeX = math.floor(x)
+    local safeY = math.floor(y)
+    local safeW = math.floor(w)
+    local safeH = math.floor(h)
 
-    local left = x
-    local baseWidth = math.floor(w / segments)
-    local remainder = w - (baseWidth * segments)
+    draw.Color(40, 40, 40, 200)
+    draw.FilledRect(safeX, safeY, safeX + safeW, safeY + safeH)
+
+    local left = safeX
+    local baseWidth = math.floor(safeW / segments)
+    local remainder = safeW - (baseWidth * segments)
+    local filledRight = safeX
 
     for i = 1, segments do
         local segWidth = baseWidth
@@ -370,7 +400,8 @@ local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillCol
         local right = left + segWidth
         if i <= filled then
             draw.Color(fillColor[1], fillColor[2], fillColor[3], fillColor[4])
-            draw.FilledRect(left, y, right, y + h)
+            draw.FilledRect(left, safeY, right, safeY + safeH)
+            filledRight = right
         end
 
         if i < segments then
@@ -379,15 +410,17 @@ local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillCol
                 alpha = 85
             end
             draw.Color(255, 255, 255, alpha)
-            draw.FilledRect(right - 1, y + 1, right, y + h - 1)
+            draw.FilledRect(right - 1, safeY + 1, right, safeY + safeH - 1)
         end
 
         left = right
     end
 
+    drawFillGradient(safeX, safeY, filledRight, safeH)
+
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
-    draw.OutlinedRect(x, y, x + w, y + h)
-    return y + h + 5
+    draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
+    return safeY + safeH + 5
 end
 
 local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryValues, boundaryCount)
@@ -1004,17 +1037,19 @@ local function drawIndicator(localPlayer, weapon)
         statusY = barY - rowH - 2
     end
 
-    local readyCount = math.max(0, math.floor(runtime.storedCrits or 0))
     local barStatusText = "BUILDING"
     local barStatusColor = colors.red
     if runtime.critBanned and not runtime.isCritBoosted then
         barStatusText = "CRIT BANNED"
         barStatusColor = { 150, 30, 30, 255 }
     elseif canCritNow then
-        barStatusText = string.format("CRIT READY (%d)", readyCount)
+        barStatusText = "CRIT READY"
         barStatusColor = colors.green
+    elseif (runtime.bucketCurrent or 0) <= 0 then
+        barStatusText = "NO CHARGE"
+        barStatusColor = colors.red
     else
-        barStatusText = string.format("BUILDING (%d)", readyCount)
+        barStatusText = "CHARGING"
     end
 
     draw.Color(barStatusColor[1], barStatusColor[2], barStatusColor[3], barStatusColor[4])
