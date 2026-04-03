@@ -104,6 +104,14 @@ local runtime = {
     critBoundaryValues = {},
     critBoundaryCount = 0,
     wasAttackDown = false,
+    debugCurrentCommand = 0,
+    debugFoundCommand = 0,
+    debugFoundSeed = 0,
+    debugSearchAttempts = 0,
+    debugMd5Available = false,
+    debugRandomSource = "none",
+    debugSearchResult = "idle",
+    debugLastLogTime = 0,
 }
 
 local weaponInfoCache = {}
@@ -117,6 +125,16 @@ local function getNowTime()
         return realTime
     end
     return os.clock()
+end
+
+local function debugLogSearch(message)
+    local nowTime = getNowTime()
+    if (nowTime - (runtime.debugLastLogTime or 0)) < 0.20 then
+        return
+    end
+
+    runtime.debugLastLogTime = nowTime
+    printc(120, 220, 255, 255, "[Crit Debug] " .. message)
 end
 
 local function getWeaponName(any)
@@ -867,6 +885,7 @@ end
 local function md5PseudoRandom(commandNumber)
     local md5Fn = rawget(_G, "MD5_PseudoRandom")
     if type(md5Fn) == "function" then
+        runtime.debugMd5Available = true
         local okGlobal, globalValue = pcall(function()
             return md5Fn(commandNumber)
         end)
@@ -879,6 +898,7 @@ local function md5PseudoRandom(commandNumber)
     if type(clientTable) == "table" then
         local clientMd5Fn = clientTable["MD5_PseudoRandom"]
         if type(clientMd5Fn) == "function" then
+            runtime.debugMd5Available = true
             local okClient, clientValue = pcall(function()
                 return clientMd5Fn(commandNumber)
             end)
@@ -888,6 +908,7 @@ local function md5PseudoRandom(commandNumber)
         end
     end
 
+    runtime.debugMd5Available = false
     return nil
 end
 
@@ -900,6 +921,7 @@ local function randomIntSeeded(seed, low, high)
                 return seededRandFn(seed, low, high)
             end)
             if okEngine and type(engineValue) == "number" then
+                runtime.debugRandomSource = "engine"
                 return engineValue
             end
         end
@@ -915,9 +937,11 @@ local function randomIntSeeded(seed, low, high)
     local roll = (lcg >> 16) & 0x7fff
     local value = low + (roll % span)
     if type(value) == "number" then
+        runtime.debugRandomSource = "fallback"
         return value
     end
 
+    runtime.debugRandomSource = "none"
     return nil
 end
 
@@ -957,7 +981,7 @@ end
 
 local function findCritCommand(weapon, localPlayer, commandNumber, wantCrit, critChance, maxAttempts)
     if type(commandNumber) ~= "number" then
-        return nil
+        return nil, nil, 0
     end
 
     local attempts = maxAttempts or SEED_ATTEMPTS
@@ -968,11 +992,12 @@ local function findCritCommand(weapon, localPlayer, commandNumber, wantCrit, cri
     local startCommand = math.floor(commandNumber)
     for i = startCommand, startCommand + attempts do
         if isCritCommand(i, weapon, localPlayer, wantCrit, critChance) then
-            return i
+            local foundSeed = commandToSeed(i)
+            return i, foundSeed, (i - startCommand)
         end
     end
 
-    return nil
+    return nil, nil, attempts
 end
 
 local function isProjectileLauncherClass(className)
@@ -1107,9 +1132,11 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
             if shouldAttemptManualCrit then
                 local originalCmdNumber = getCmdNumber(pCmd)
                 local forcedCmdNumber = nil
+                local forcedSeed = nil
+                local attemptsUsed = 0
                 if type(originalCmdNumber) == "number" then
                     local maxAttempts = getSeedAttemptsForWeapon(weapon)
-                    forcedCmdNumber = findCritCommand(
+                    forcedCmdNumber, forcedSeed, attemptsUsed = findCritCommand(
                         weapon,
                         localPlayer,
                         originalCmdNumber,
@@ -1118,6 +1145,11 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
                         maxAttempts
                     )
                 end
+
+                runtime.debugCurrentCommand = originalCmdNumber or 0
+                runtime.debugFoundCommand = forcedCmdNumber or 0
+                runtime.debugFoundSeed = forcedSeed or 0
+                runtime.debugSearchAttempts = attemptsUsed or 0
 
                 if forcedCmdNumber and originalCmdNumber then
                     local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
@@ -1132,14 +1164,41 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
                         if ticksLeft < 0 then
                             ticksLeft = 0
                         end
+                        runtime.debugSearchResult = "found"
                         manualDecision = string.format("allowed (shift %d)", ticksLeft)
+                        debugLogSearch(string.format(
+                            "cmd=%d found=%d seed=%d shift=%d md5=%s rng=%s",
+                            originalCmdNumber,
+                            forcedCmdNumber,
+                            forcedSeed or 0,
+                            ticksLeft,
+                            runtime.debugMd5Available and "yes" or "no",
+                            runtime.debugRandomSource or "none"
+                        ))
                     else
+                        runtime.debugSearchResult = "write-failed"
                         manualDecision = "blocked (cmd write failed)"
+                        debugLogSearch(string.format(
+                            "cmd=%d found=%d but write failed",
+                            originalCmdNumber,
+                            forcedCmdNumber
+                        ))
                     end
                 else
+                    runtime.debugSearchResult = "not-found"
                     manualDecision = "blocked (no crit command found)"
+                    if originalCmdNumber then
+                        debugLogSearch(string.format(
+                            "cmd=%d no-crit-found attempts=%d md5=%s rng=%s",
+                            originalCmdNumber,
+                            attemptsUsed or 0,
+                            runtime.debugMd5Available and "yes" or "no",
+                            runtime.debugRandomSource or "none"
+                        ))
+                    end
                 end
             else
+                runtime.debugSearchResult = "probability-skip"
                 manualDecision = "pass (probability modifier)"
             end
         end
@@ -1569,6 +1628,20 @@ local function drawIndicator(localPlayer, weapon)
             )
             draw.Color(colors.gray[1], colors.gray[2], colors.gray[3], colors.gray[4])
             draw.Text(baseX, infoY, chanceLine)
+            infoY = infoY + rowH
+
+            local debugLine = string.format(
+                "Cmd %d  Found %d  Seed %d  Try %d  %s/%s  %s",
+                math.floor(runtime.debugCurrentCommand or 0),
+                math.floor(runtime.debugFoundCommand or 0),
+                math.floor(runtime.debugFoundSeed or 0),
+                math.floor(runtime.debugSearchAttempts or 0),
+                runtime.debugMd5Available and "md5" or "no-md5",
+                runtime.debugRandomSource or "none",
+                runtime.debugSearchResult or "idle"
+            )
+            draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
+            draw.Text(baseX, infoY, debugLine)
         end
     end
 
