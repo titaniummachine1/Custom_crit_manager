@@ -12,8 +12,8 @@ local IN_ATTACK2_CONST = IN_ATTACK2 or 2
 local TF2_SPY_CLASS = TF2_Spy or 8
 local KEY_C_CONST = KEY_C or 67
 local WEAPON_RANDOM_RANGE = 10000
-local SEED_ATTEMPTS = 1024
-local PROJECTILE_SEED_ATTEMPTS = 256
+local SEED_ATTEMPTS = 4096
+local PROJECTILE_SEED_ATTEMPTS = 1024
 
 local colors = {
     white = { 255, 255, 255, 255 },
@@ -103,6 +103,7 @@ local runtime = {
     readyTransitionTarget = 0,
     critBoundaryValues = {},
     critBoundaryCount = 0,
+    wasAttackDown = false,
 }
 
 local weaponInfoCache = {}
@@ -1087,15 +1088,19 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 
     local cmdButtons = pCmd:GetButtons()
     local attackPressed = (cmdButtons & IN_ATTACK_CONST) ~= 0
-    if manualActive and attackPressed then
+    local attackJustPressed = attackPressed and (not runtime.wasAttackDown)
+    local shouldProcessManual = attackJustPressed
+    if info.isRapidFire and attackPressed then
+        shouldProcessManual = true
+    end
+    runtime.wasAttackDown = attackPressed
+
+    if manualActive and shouldProcessManual then
         if not serverAllowCrit or not svAllowCrit then
-            pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
             manualDecision = "blocked (crit banned)"
         elseif critBannedByChance and not isCritBoosted then
-            pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
             manualDecision = "blocked (crit bucket ban)"
         elseif usableCrits <= 0 then
-            pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
             manualDecision = "blocked (minimum storage)"
         else
             local shouldAttemptManualCrit = true
@@ -1141,12 +1146,9 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
                 end
 
                 if not rewriteApplied then
-                    manualDecision = "allowed (fallback button)"
+                    manualDecision = "blocked (no crit command found)"
                 end
-
-                pCmd:SetButtons(pCmd:GetButtons() | IN_ATTACK2_CONST)
             else
-                pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
                 manualDecision = "blocked (probability modifier)"
             end
         end
@@ -1587,17 +1589,20 @@ local function onCreateMove(pCmd)
 
     local localPlayer = entities.GetLocalPlayer()
     if not localPlayer or not localPlayer:IsAlive() then
+        runtime.wasAttackDown = false
         runtime.manualDecision = "idle"
         return
     end
 
     local weapon = localPlayer:GetPropEntity("m_hActiveWeapon")
     if not weapon or not weapon:IsWeapon() then
+        runtime.wasAttackDown = false
         runtime.manualDecision = "idle"
         return
     end
 
     if not canFireCriticalShot(localPlayer, weapon) then
+        runtime.wasAttackDown = false
         runtime.manualDecision = "not eligible"
         return
     end
