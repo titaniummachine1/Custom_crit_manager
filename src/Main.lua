@@ -360,7 +360,9 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
     draw.FilledRect(safeX, safeY, safeX + currentFill, safeY + safeH)
 
-    -- Overlay: crit cost (next shot) shown in green.
+    drawFillGradient(safeX, safeY, safeX + currentFill, safeH)
+
+    -- Overlay: crit cost (next shot) shown in green, on top of texture.
     if costClamped > 0 and greenStart < greenEnd then
         local alpha = overlayAlpha
         if type(alpha) ~= "number" then
@@ -369,8 +371,6 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
         draw.FilledRect(greenStart, safeY, greenEnd, safeY + safeH)
     end
-
-    drawFillGradient(safeX, safeY, safeX + currentFill, safeH)
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
     draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
