@@ -434,7 +434,6 @@ end
 
 local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryValues, boundaryCount)
     local safeMax = math.max(1, math.floor(maxValue or 1))
-    local safeCurrent = math.max(0, math.floor(currentValue or 0))
     local count = math.max(0, math.floor(boundaryCount or 0))
 
     if count <= 1 then
@@ -445,9 +444,10 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local safeY = math.floor(y)
     local safeW = math.floor(w)
     local safeH = math.floor(h)
-    local lastBoundaryX = -1
 
-    local prevValue = safeCurrent
+    -- prevValue starts at boundaryValues[1] (bucket after 1st crit, right edge of 2nd segment)
+    local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
+
     for i = 2, count do
         local nextValue = boundaryValues[i] or 0
         if nextValue < 0 then
@@ -456,23 +456,21 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
             nextValue = safeMax
         end
 
-        local boundaryX = safeX + math.floor((nextValue / safeMax) * safeW)
-        local prevX = safeX + math.floor((prevValue / safeMax) * safeW)
-        if prevX <= boundaryX then
+        local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
+        local leftX = safeX + math.floor((nextValue / safeMax) * safeW)
+
+        if leftX >= rightX then
             break
         end
 
-        if boundaryX ~= lastBoundaryX then
-            local alpha = 54 - ((i - 1) * 9)
-            if alpha < 10 then
-                alpha = 10
-            end
+        -- Each successive future crit segment fades out
+        local alpha = math.max(15, 120 - ((i - 2) * 32))
+        draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
+        draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
 
-            draw.Color(255, 255, 255, alpha + 20)
-            draw.FilledRect(boundaryX, safeY + 1, boundaryX + 1, safeY + safeH - 1)
-
-            lastBoundaryX = boundaryX
-        end
+        -- White divider at the left edge of this segment
+        draw.Color(255, 255, 255, 90)
+        draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
 
         prevValue = nextValue
     end
