@@ -360,13 +360,13 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
     draw.FilledRect(safeX, safeY, safeX + currentFill, safeY + safeH)
 
-    -- Current crit cost: solid cyan painted over red, same opacity as red.
+    -- Current crit cost: solid green painted over red, same opacity as red.
     if costClamped > 0 and greenStart < greenEnd then
-        draw.Color(23, 165, 239, 255)
+        draw.Color(colors.green[1], colors.green[2], colors.green[3], 255)
         draw.FilledRect(greenStart, safeY, greenEnd, safeY + safeH)
     end
 
-    -- Texture over everything (red + cyan).
+    -- Texture over everything (red + green).
     drawFillGradient(safeX, safeY, safeX + currentFill, safeH)
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
@@ -462,7 +462,7 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
         if leftX >= rightX then break end
 
         local alpha = alphas[i - 1] or 15
-        draw.Color(23, 165, 239, alpha)
+        draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
         draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
 
         -- White divider at the left boundary
