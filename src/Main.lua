@@ -220,20 +220,28 @@ local function ensureBarGradientMask()
         return
     end
 
+    local texW = 256
+    local texH = 16
     local chars = {}
-    for i = 0, 255 do
-        local p = #chars
-        chars[p + 1] = 255
-        chars[p + 2] = 255
-        chars[p + 3] = 255
-        chars[p + 4] = i
-        chars[p + 5] = 255
-        chars[p + 6] = 255
-        chars[p + 7] = 255
-        chars[p + 8] = i
+
+    for y = 0, texH - 1 do
+        for x = 0, texW - 1 do
+            local g1 = (math.sin((x / texW) * 12.5663706 + (y * 0.35)) + 1.0) * 0.5
+            local g2 = (math.sin((x / texW) * 43.9822971 + (y * 0.9)) + 1.0) * 0.5
+            local alpha = math.floor(14 + (g1 * 70) + (g2 * 34) + (y * 2))
+            if alpha > 255 then
+                alpha = 255
+            end
+
+            local p = #chars
+            chars[p + 1] = 255
+            chars[p + 2] = 255
+            chars[p + 3] = 255
+            chars[p + 4] = alpha
+        end
     end
 
-    barGradientMask = draw.CreateTextureRGBA(string.char(table.unpack(chars)), 256, 2)
+    barGradientMask = draw.CreateTextureRGBA(string.char(table.unpack(chars)), texW, texH)
 end
 
 local function drawFillGradient(x, y, right, h)
@@ -250,10 +258,10 @@ local function drawFillGradient(x, y, right, h)
         return
     end
 
-    -- Soft cyan highlight with a subtle white sheen on top.
-    draw.Color(23, 165, 239, 48)
+    -- Textured cyan highlight with a subtle white sheen on top.
+    draw.Color(23, 165, 239, 76)
     draw.TexturedRect(barGradientMask, safeX, safeY, safeRight, safeY + safeH)
-    draw.Color(255, 255, 255, 26)
+    draw.Color(255, 255, 255, 34)
     draw.TexturedRect(barGradientMask, safeX, safeY, safeRight, safeY + safeH)
 end
 
