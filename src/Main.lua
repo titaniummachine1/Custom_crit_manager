@@ -447,6 +447,7 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
     local alphas = { 110, 70, 40, 20 }
     local maxSegments = math.min(count, 5)
+    local firstLeftX = -1
 
     for i = 2, maxSegments do
         local nextValue = boundaryValues[i] or 0
@@ -461,18 +462,24 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
 
         if leftX >= rightX then break end
 
+        -- Paint green directly over existing red+texture bar, same green RGB, only alpha differs
         local alpha = alphas[i - 1] or 15
-        -- Dark backing so green blends with neutral, not with red underneath
-        draw.Color(40, 40, 40, 200)
-        draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
         draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
+
+        if firstLeftX == -1 then firstLeftX = leftX end
 
         -- White divider at the left boundary
         draw.Color(255, 255, 255, 80)
         draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
 
         prevValue = nextValue
+    end
+
+    -- Re-apply texture over prediction range so it looks consistent with the rest of the bar
+    local predRight = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
+    if firstLeftX ~= -1 and predRight > firstLeftX then
+        drawFillGradient(firstLeftX, safeY, predRight, safeH)
     end
 end
 
