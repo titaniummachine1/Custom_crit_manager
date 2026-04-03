@@ -51,6 +51,18 @@ local keyRuntime = {
     toggledOn = false,
 }
 
+local md5ShiftAmounts = {
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+}
+
+local md5Constants = {}
+for i = 1, 64 do
+    md5Constants[i] = math.floor(math.abs(math.sin(i)) * 4294967296) & 0xffffffff
+end
+
 local dragRuntime = {
     active = false,
     wasMouseDown = false,
@@ -135,6 +147,79 @@ local function debugLogSearch(message)
 
     runtime.debugLastLogTime = nowTime
     printc(120, 220, 255, 255, "[Crit Debug] " .. message)
+end
+
+local function leftRotate32(value, bits)
+    local masked = value & 0xffffffff
+    return ((masked << bits) | (masked >> (32 - bits))) & 0xffffffff
+end
+
+local function md5PseudoRandomFallback(commandNumber)
+    local seed = math.floor(commandNumber) & 0xffffffff
+    local words = {
+        seed,
+        0x80,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        0,
+    }
+
+    local a0 = 0x67452301
+    local b0 = 0xefcdab89
+    local c0 = 0x98badcfe
+    local d0 = 0x10325476
+
+    local a = a0
+    local b = b0
+    local c = c0
+    local d = d0
+
+    for i = 0, 63 do
+        local f = 0
+        local g = 0
+
+        if i < 16 then
+            f = ((b & c) | ((~b) & d)) & 0xffffffff
+            g = i
+        elseif i < 32 then
+            f = ((d & b) | ((~d) & c)) & 0xffffffff
+            g = ((5 * i) + 1) % 16
+        elseif i < 48 then
+            f = (b ~ c ~ d) & 0xffffffff
+            g = ((3 * i) + 5) % 16
+        else
+            f = (c ~ (b | (~d))) & 0xffffffff
+            g = (7 * i) % 16
+        end
+
+        local temp = d
+        d = c
+        c = b
+        local rotated = leftRotate32((a + f + md5Constants[i + 1] + words[g + 1]) & 0xffffffff, md5ShiftAmounts[i + 1])
+        b = (b + rotated) & 0xffffffff
+        a = temp
+    end
+
+    local bWord = (b0 + b) & 0xffffffff
+    local cWord = (c0 + c) & 0xffffffff
+
+    return (
+        ((bWord >> 16) & 0xff)
+        | (((bWord >> 24) & 0xff) << 8)
+        | ((cWord & 0xff) << 16)
+        | (((cWord >> 8) & 0xff) << 24)
+    ) & 0xffffffff
 end
 
 local function getWeaponName(any)
@@ -908,8 +993,8 @@ local function md5PseudoRandom(commandNumber)
         end
     end
 
-    runtime.debugMd5Available = false
-    return nil
+    runtime.debugMd5Available = true
+    return md5PseudoRandomFallback(commandNumber)
 end
 
 local function randomIntSeeded(seed, low, high)
