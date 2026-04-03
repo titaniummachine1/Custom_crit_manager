@@ -104,10 +104,6 @@ local runtime = {
     critBoundaryValues = {},
     critBoundaryCount = 0,
     wasAttackDown = false,
-    preparedWeaponIndex = 0,
-    preparedBaseCommand = 0,
-    preparedCritCommand = 0,
-    preparedPureCritCommand = 0,
 }
 
 local weaponInfoCache = {}
@@ -979,30 +975,6 @@ local function findCritCommand(weapon, localPlayer, commandNumber, wantCrit, cri
     return nil
 end
 
-local function findPureCritCommand(commandNumber, maxAttempts)
-    if type(commandNumber) ~= "number" then
-        return nil
-    end
-
-    local attempts = maxAttempts or SEED_ATTEMPTS
-    if attempts < 1 then
-        attempts = 1
-    end
-
-    local startCommand = math.floor(commandNumber)
-    for i = startCommand, startCommand + attempts do
-        local seed = commandToSeed(i)
-        if type(seed) == "number" then
-            local randomRoll = randomIntSeeded(seed, 0, WEAPON_RANDOM_RANGE - 1)
-            if type(randomRoll) == "number" and randomRoll == 0 then
-                return i
-            end
-        end
-    end
-
-    return nil
-end
-
 local function isProjectileLauncherClass(className)
     return className == "CTFRocketLauncher"
         or className == "CTFRocketLauncher_DirectHit"
@@ -1022,55 +994,6 @@ local function getSeedAttemptsForWeapon(weapon)
         return PROJECTILE_SEED_ATTEMPTS
     end
     return SEED_ATTEMPTS
-end
-
-local function getPreparedCritCommand(weapon, localPlayer, currentCommandNumber, critChance)
-    if type(currentCommandNumber) ~= "number" then
-        return nil
-    end
-
-    local weaponIndex = weapon:GetIndex()
-    if type(weaponIndex) ~= "number" then
-        return nil
-    end
-
-    local currentCmd = math.floor(currentCommandNumber)
-
-    if runtime.preparedWeaponIndex ~= weaponIndex then
-        runtime.preparedWeaponIndex = weaponIndex
-        runtime.preparedBaseCommand = 0
-        runtime.preparedCritCommand = 0
-    end
-
-    if runtime.preparedPureCritCommand >= currentCmd then
-        return runtime.preparedPureCritCommand
-    end
-
-    if runtime.preparedCritCommand >= currentCmd then
-        return runtime.preparedCritCommand
-    end
-
-    local maxAttempts = getSeedAttemptsForWeapon(weapon)
-    local purePrepared = findPureCritCommand(currentCmd, maxAttempts)
-    if type(purePrepared) == "number" then
-        runtime.preparedBaseCommand = currentCmd
-        runtime.preparedPureCritCommand = purePrepared
-        runtime.preparedCritCommand = purePrepared
-        return purePrepared
-    end
-
-    local prepared = findCritCommand(weapon, localPlayer, currentCmd, true, critChance, maxAttempts)
-    if type(prepared) == "number" then
-        runtime.preparedBaseCommand = currentCmd
-        runtime.preparedCritCommand = prepared
-        runtime.preparedPureCritCommand = 0
-        return prepared
-    end
-
-    runtime.preparedBaseCommand = currentCmd
-    runtime.preparedCritCommand = 0
-    runtime.preparedPureCritCommand = 0
-    return nil
 end
 
 local function applyCritLogic(pCmd, localPlayer, weapon)
@@ -1163,21 +1086,16 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 
     local cmdButtons = pCmd:GetButtons()
     local attackPressed = (cmdButtons & IN_ATTACK_CONST) ~= 0
-    local shouldProcessManual = attackPressed
-    runtime.wasAttackDown = attackPressed
-
-    if manualActive then
-        local prepCmdNumber = getCmdNumber(pCmd)
-        getPreparedCritCommand(weapon, localPlayer, prepCmdNumber, baseChance)
+    local attackJustPressed = attackPressed and (not runtime.wasAttackDown)
+    local shouldProcessManual = attackJustPressed
+    if info.isRapidFire and attackPressed then
+        shouldProcessManual = true
     end
+    runtime.wasAttackDown = attackPressed
 
     if manualActive and shouldProcessManual then
         if not serverAllowCrit or not svAllowCrit then
             manualDecision = "blocked (crit banned)"
-        elseif critBannedByChance and not isCritBoosted then
-            manualDecision = "blocked (crit bucket ban)"
-        elseif usableCrits <= 0 then
-            manualDecision = "blocked (minimum storage)"
         else
             local shouldAttemptManualCrit = true
             if useProbabilityModifier then
@@ -1188,24 +1106,38 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 
             if shouldAttemptManualCrit then
                 local originalCmdNumber = getCmdNumber(pCmd)
-                local forcedCmdNumber = getPreparedCritCommand(weapon, localPlayer, originalCmdNumber, baseChance)
-                if forcedCmdNumber and originalCmdNumber and forcedCmdNumber <= originalCmdNumber then
-                    local pseudo = md5PseudoRandom(originalCmdNumber)
+                local forcedCmdNumber = nil
+                if type(originalCmdNumber) == "number" then
+                    local maxAttempts = getSeedAttemptsForWeapon(weapon)
+                    forcedCmdNumber = findCritCommand(
+                        weapon,
+                        localPlayer,
+                        originalCmdNumber,
+                        true,
+                        baseChance,
+                        maxAttempts
+                    )
+                end
+
+                if forcedCmdNumber and originalCmdNumber then
+                    local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
+                    local pseudo = md5PseudoRandom(forcedCmdNumber)
                     if type(pseudo) == "number" then
                         local maskedSeed = pseudo & 0x7fffffff
                         setCmdRandomSeed(pCmd, maskedSeed)
                     end
-                    manualDecision = "allowed (prepared crit)"
-                elseif forcedCmdNumber and originalCmdNumber then
-                    pCmd:SetButtons(cmdButtons & (~IN_ATTACK_CONST))
-                    local ticksLeft = forcedCmdNumber - originalCmdNumber
-                    if ticksLeft < 0 then
-                        ticksLeft = 0
+
+                    if cmdSetOk then
+                        local ticksLeft = forcedCmdNumber - originalCmdNumber
+                        if ticksLeft < 0 then
+                            ticksLeft = 0
+                        end
+                        manualDecision = string.format("allowed (shift %d)", ticksLeft)
+                    else
+                        manualDecision = "blocked (cmd write failed)"
                     end
-                    manualDecision = string.format("waiting (%d)", ticksLeft)
                 else
-                    pCmd:SetButtons(cmdButtons & (~IN_ATTACK_CONST))
-                    manualDecision = "waiting (searching)"
+                    manualDecision = "blocked (no crit command found)"
                 end
             else
                 manualDecision = "pass (probability modifier)"
@@ -1649,10 +1581,6 @@ local function onCreateMove(pCmd)
     local localPlayer = entities.GetLocalPlayer()
     if not localPlayer or not localPlayer:IsAlive() then
         runtime.wasAttackDown = false
-        runtime.preparedWeaponIndex = 0
-        runtime.preparedBaseCommand = 0
-        runtime.preparedCritCommand = 0
-        runtime.preparedPureCritCommand = 0
         runtime.manualDecision = "idle"
         return
     end
@@ -1660,20 +1588,12 @@ local function onCreateMove(pCmd)
     local weapon = localPlayer:GetPropEntity("m_hActiveWeapon")
     if not weapon or not weapon:IsWeapon() then
         runtime.wasAttackDown = false
-        runtime.preparedWeaponIndex = 0
-        runtime.preparedBaseCommand = 0
-        runtime.preparedCritCommand = 0
-        runtime.preparedPureCritCommand = 0
         runtime.manualDecision = "idle"
         return
     end
 
     if not canFireCriticalShot(localPlayer, weapon) then
         runtime.wasAttackDown = false
-        runtime.preparedWeaponIndex = 0
-        runtime.preparedBaseCommand = 0
-        runtime.preparedCritCommand = 0
-        runtime.preparedPureCritCommand = 0
         runtime.manualDecision = "not eligible"
         return
     end
