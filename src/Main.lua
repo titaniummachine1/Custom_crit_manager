@@ -434,6 +434,7 @@ end
 
 local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryValues, boundaryCount)
     local safeMax = math.max(1, math.floor(maxValue or 1))
+    local safeCurrent = math.max(0, math.floor(currentValue or 0))
     local count = math.max(0, math.floor(boundaryCount or 0))
 
     if count <= 1 then
@@ -445,33 +446,52 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local safeW = math.floor(w)
     local safeH = math.floor(h)
 
-    -- prevValue starts at boundaryValues[1] (bucket after 1st crit)
+    -- segment 1 (current crit cost) already drawn by drawForcePreviewBar.
+    -- Draw segments 2..5 with decreasing alpha.
+    -- Dark background first so cyan reads as pure cyan (no red bleed-through).
     local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
-    -- Alphas for predictions 2..5 (segment 1 is already drawn by drawForcePreviewBar)
-    local alphas = { 130, 90, 58, 30 }
+    local alphas = { 200, 130, 80, 40 }
     local maxSegments = math.min(count, 5)
 
     for i = 2, maxSegments do
         local nextValue = boundaryValues[i] or 0
-        if nextValue < 0 then
-            nextValue = 0
-        elseif nextValue > safeMax then
-            nextValue = safeMax
-        end
+        if nextValue < 0 then nextValue = 0
+        elseif nextValue > safeMax then nextValue = safeMax end
 
         local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
         local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
 
-        if leftX >= rightX then
-            break
-        end
+        if leftX >= rightX then break end
 
-        local alpha = alphas[i - 1] or 20
+        -- Dark backing so cyan is not tinted by red underneath
+        draw.Color(20, 20, 20, 220)
+        draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
+
+        -- Cyan prediction, full-opacity color, alpha controls transparency
+        local alpha = alphas[i - 1] or 25
         draw.Color(23, 165, 239, alpha)
         draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
 
-        -- White divider at left edge of each future segment
-        draw.Color(255, 255, 255, 70)
+        prevValue = nextValue
+    end
+
+    -- Apply texture over ALL filled content (segment 1 + future segments)
+    local currentFillEnd = safeX + math.floor((safeCurrent / safeMax) * safeW)
+    drawFillGradient(safeX, safeY, currentFillEnd, safeH)
+
+    -- White dividers between each segment, drawn on top of texture
+    prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
+    for i = 2, maxSegments do
+        local nextValue = boundaryValues[i] or 0
+        if nextValue < 0 then nextValue = 0
+        elseif nextValue > safeMax then nextValue = safeMax end
+
+        local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
+        local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
+
+        if leftX >= rightX then break end
+
+        draw.Color(255, 255, 255, 80)
         draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
 
         prevValue = nextValue
