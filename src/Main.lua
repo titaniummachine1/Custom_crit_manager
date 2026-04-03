@@ -12,8 +12,8 @@ local IN_ATTACK2_CONST = IN_ATTACK2 or 2
 local TF2_SPY_CLASS = TF2_Spy or 8
 local KEY_C_CONST = KEY_C or 67
 local WEAPON_RANDOM_RANGE = 10000
-local SEED_ATTEMPTS = 128
-local PROJECTILE_SEED_ATTEMPTS = 16
+local SEED_ATTEMPTS = 1024
+local PROJECTILE_SEED_ATTEMPTS = 256
 
 local colors = {
     white = { 255, 255, 255, 255 },
@@ -922,70 +922,18 @@ local function randomIntSeeded(seed, low, high)
     return nil
 end
 
-local function getLocalPlayerIndex(localPlayer)
-    local okMethod, methodValue = pcall(function()
-        return localPlayer:GetIndex()
-    end)
-    if okMethod and type(methodValue) == "number" then
-        return methodValue
-    end
-
-    local okClient, clientValue = pcall(function()
-        return client.GetLocalPlayerIndex()
-    end)
-    if okClient and type(clientValue) == "number" then
-        return clientValue
-    end
-
-    return 1
-end
-
-local function getCurrentCritSeed(weapon)
-    local okMethod, methodValue = pcall(function()
-        return weapon:GetCurrentSeed()
-    end)
-    if okMethod and type(methodValue) == "number" then
-        return methodValue
-    end
-
-    local okAlt, altValue = pcall(function()
-        return weapon:GetCritSeed()
-    end)
-    if okAlt and type(altValue) == "number" then
-        return altValue
-    end
-
-    return nil
-end
-
-local function commandToSeed(commandNumber, weaponEntIndex, localPlayerIndex, isMelee)
+local function commandToSeed(commandNumber)
     local pseudo = md5PseudoRandom(commandNumber)
     if type(pseudo) ~= "number" then
         return nil
     end
 
-    local maskedPseudo = pseudo & 0x7fffffff
-    local mask = 0
-    if isMelee then
-        mask = (weaponEntIndex << 16) | (localPlayerIndex << 8)
-    else
-        mask = (weaponEntIndex << 8) | localPlayerIndex
-    end
-
-    return maskedPseudo ~ mask
+    return pseudo & 0x7fffffff
 end
 
 local function isCritCommand(commandNumber, weapon, localPlayer, wantCrit, critChance)
-    local localPlayerIndex = getLocalPlayerIndex(localPlayer)
-    local weaponEntIndex = weapon:GetIndex()
-    local isMelee = weapon:IsMeleeWeapon()
-    local seed = commandToSeed(commandNumber, weaponEntIndex, localPlayerIndex, isMelee)
+    local seed = commandToSeed(commandNumber)
     if type(seed) ~= "number" then
-        return false
-    end
-
-    local currentSeed = getCurrentCritSeed(weapon)
-    if type(currentSeed) == "number" and currentSeed == seed then
         return false
     end
 
