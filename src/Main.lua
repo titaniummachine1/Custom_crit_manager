@@ -1044,7 +1044,7 @@ local function drawIndicator(localPlayer, weapon)
         barStatusColor = { 150, 30, 30, 255 }
     elseif canCritNow then
         barStatusText = "CRIT READY"
-        barStatusColor = colors.green
+        barStatusColor = { 23, 165, 239, 255 }
     elseif (runtime.bucketCurrent or 0) <= 0 then
         barStatusText = "NO CHARGE"
         barStatusColor = colors.red
@@ -1054,11 +1054,6 @@ local function drawIndicator(localPlayer, weapon)
 
     draw.Color(barStatusColor[1], barStatusColor[2], barStatusColor[3], barStatusColor[4])
     draw.Text(barX, statusY, barStatusText)
-
-    local nextCostText = string.format("NEXT: %d", math.max(0, math.floor(runtime.critCostNow or 0)))
-    local nextCostWidth = draw.GetTextSize(nextCostText)
-    draw.Color(colors.gray[1], colors.gray[2], colors.gray[3], colors.gray[4])
-    draw.Text(barX + barW - nextCostWidth, statusY, nextCostText)
 
     if menuOpen then
         local headerText = "CRIT MANAGER"
