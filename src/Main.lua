@@ -462,6 +462,9 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
         if leftX >= rightX then break end
 
         local alpha = alphas[i - 1] or 15
+        -- Dark backing so green blends with neutral, not with red underneath
+        draw.Color(40, 40, 40, 200)
+        draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
         draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
 
