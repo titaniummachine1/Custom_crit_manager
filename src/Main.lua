@@ -356,21 +356,17 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.Color(40, 40, 40, 200)
     draw.FilledRect(safeX, safeY, safeX + safeW, safeY + safeH)
 
-    -- Base: current bucket in red.
+    -- Red fill for the full bucket amount.
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
     draw.FilledRect(safeX, safeY, safeX + currentFill, safeY + safeH)
 
-    -- Overlay: current crit cost shown in cyan.
+    -- Current crit cost: solid cyan painted over red, same opacity as red.
     if costClamped > 0 and greenStart < greenEnd then
-        local alpha = overlayAlpha
-        if type(alpha) ~= "number" then
-            alpha = 200
-        end
-        draw.Color(23, 165, 239, alpha)
+        draw.Color(23, 165, 239, 255)
         draw.FilledRect(greenStart, safeY, greenEnd, safeY + safeH)
     end
 
-    -- Texture painted last so it coats both red and green uniformly.
+    -- Texture over everything (red + cyan).
     drawFillGradient(safeX, safeY, safeX + currentFill, safeH)
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
@@ -446,51 +442,30 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local safeW = math.floor(w)
     local safeH = math.floor(h)
 
-    -- segment 1 (current crit cost) already drawn by drawForcePreviewBar.
-    -- Draw segments 2..5 with decreasing alpha.
-    -- Dark background first so cyan reads as pure cyan (no red bleed-through).
+    -- Segments 2..5: transparent cyan directly over the red+textured bar.
+    -- No dark backing, no extra texture -- they just tint what's already there.
     local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
-    local alphas = { 200, 130, 80, 40 }
+    local alphas = { 110, 70, 40, 20 }
     local maxSegments = math.min(count, 5)
 
     for i = 2, maxSegments do
         local nextValue = boundaryValues[i] or 0
-        if nextValue < 0 then nextValue = 0
-        elseif nextValue > safeMax then nextValue = safeMax end
+        if nextValue < 0 then
+            nextValue = 0
+        elseif nextValue > safeMax then
+            nextValue = safeMax
+        end
 
         local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
         local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
 
         if leftX >= rightX then break end
 
-        -- Dark backing so cyan is not tinted by red underneath
-        draw.Color(20, 20, 20, 220)
-        draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
-
-        -- Cyan prediction, full-opacity color, alpha controls transparency
-        local alpha = alphas[i - 1] or 25
+        local alpha = alphas[i - 1] or 15
         draw.Color(23, 165, 239, alpha)
         draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
 
-        prevValue = nextValue
-    end
-
-    -- Apply texture over ALL filled content (segment 1 + future segments)
-    local currentFillEnd = safeX + math.floor((safeCurrent / safeMax) * safeW)
-    drawFillGradient(safeX, safeY, currentFillEnd, safeH)
-
-    -- White dividers between each segment, drawn on top of texture
-    prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
-    for i = 2, maxSegments do
-        local nextValue = boundaryValues[i] or 0
-        if nextValue < 0 then nextValue = 0
-        elseif nextValue > safeMax then nextValue = safeMax end
-
-        local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
-        local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
-
-        if leftX >= rightX then break end
-
+        -- White divider at the left boundary
         draw.Color(255, 255, 255, 80)
         draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
 
