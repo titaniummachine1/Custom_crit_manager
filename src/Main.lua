@@ -419,17 +419,17 @@ local function drawSteppedBar(x, y, w, h, filledSegments, totalSegments, fillCol
 end
 
 local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryValues, boundaryCount)
-    local safeMax = math.max(1, math.floor(maxValue or 1))
-    local safeCurrent = math.max(0, math.floor(currentValue or 0))
-    local count = math.max(0, math.floor(boundaryCount or 0))
+    local safeMax       = math.max(1, math.floor(maxValue or 1))
+    local safeCurrent   = math.max(0, math.floor(currentValue or 0))
+    local count         = math.max(0, math.floor(boundaryCount or 0))
 
-    local safeX = math.floor(x)
-    local safeY = math.floor(y)
-    local safeW = math.floor(w)
-    local safeH = math.floor(h)
+    local safeX         = math.floor(x)
+    local safeY         = math.floor(y)
+    local safeW         = math.floor(w)
+    local safeH         = math.floor(h)
 
-    local seg1Left  = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
-    local seg1Right = safeX + math.floor((safeCurrent / safeMax) * safeW)
+    local seg1Left      = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
+    local seg1Right     = safeX + math.floor((safeCurrent / safeMax) * safeW)
     local fullFillRight = seg1Right
 
     -- Seg1: solid green on dark bg (drawForcePreviewBar left it dark)
@@ -441,14 +441,17 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     -- Segs 2..5: logarithmic alpha decay (~65% each step) so each step is clearly distinct
     -- Draws on dark bg so green fades cleanly to dark without color mixing with red
     if count >= 2 then
-        local logAlphas = { 190, 130, 80, 45 }
+        local logAlphas = { 70, 40, 22, 10 }
         local maxSegments = math.min(count, 5)
         local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
 
         for i = 2, maxSegments do
             local nextValue = boundaryValues[i] or 0
-            if nextValue < 0 then nextValue = 0
-            elseif nextValue > safeMax then nextValue = safeMax end
+            if nextValue < 0 then
+                nextValue = 0
+            elseif nextValue > safeMax then
+                nextValue = safeMax
+            end
 
             local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
             local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
@@ -479,8 +482,11 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
         local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
         for i = 2, maxSegments do
             local nextValue = boundaryValues[i] or 0
-            if nextValue < 0 then nextValue = 0
-            elseif nextValue > safeMax then nextValue = safeMax end
+            if nextValue < 0 then
+                nextValue = 0
+            elseif nextValue > safeMax then
+                nextValue = safeMax
+            end
 
             local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
             local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
