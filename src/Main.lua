@@ -1163,11 +1163,7 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 
     local cmdButtons = pCmd:GetButtons()
     local attackPressed = (cmdButtons & IN_ATTACK_CONST) ~= 0
-    local attackJustPressed = attackPressed and (not runtime.wasAttackDown)
-    local shouldProcessManual = attackJustPressed
-    if info.isRapidFire and attackPressed then
-        shouldProcessManual = true
-    end
+    local shouldProcessManual = attackPressed
     runtime.wasAttackDown = attackPressed
 
     if manualActive then
@@ -1178,6 +1174,10 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     if manualActive and shouldProcessManual then
         if not serverAllowCrit or not svAllowCrit then
             manualDecision = "blocked (crit banned)"
+        elseif critBannedByChance and not isCritBoosted then
+            manualDecision = "blocked (crit bucket ban)"
+        elseif usableCrits <= 0 then
+            manualDecision = "blocked (minimum storage)"
         else
             local shouldAttemptManualCrit = true
             if useProbabilityModifier then
@@ -1187,37 +1187,28 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
             end
 
             if shouldAttemptManualCrit then
-                local canRewriteCmd = shouldRewriteCmdForWeapon(weapon)
-                local rewriteApplied = false
-
-                if canRewriteCmd then
-                    local originalCmdNumber = getCmdNumber(pCmd)
-                    local forcedCmdNumber = getPreparedCritCommand(weapon, localPlayer, originalCmdNumber, baseChance)
-                    if forcedCmdNumber then
-                        local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
-                        local pseudo = md5PseudoRandom(forcedCmdNumber)
-                        local seedSetOk = false
-                        if type(pseudo) == "number" then
-                            local maskedSeed = pseudo & 0x7fffffff
-                            seedSetOk = setCmdRandomSeed(pCmd, maskedSeed)
-                        end
-
-                        if cmdSetOk then
-                            rewriteApplied = true
-                            if seedSetOk then
-                                manualDecision = "allowed (forced cmd+seed)"
-                            else
-                                manualDecision = "allowed (forced cmd)"
-                            end
-                        end
+                local originalCmdNumber = getCmdNumber(pCmd)
+                local forcedCmdNumber = getPreparedCritCommand(weapon, localPlayer, originalCmdNumber, baseChance)
+                if forcedCmdNumber and originalCmdNumber and forcedCmdNumber <= originalCmdNumber then
+                    local pseudo = md5PseudoRandom(originalCmdNumber)
+                    if type(pseudo) == "number" then
+                        local maskedSeed = pseudo & 0x7fffffff
+                        setCmdRandomSeed(pCmd, maskedSeed)
                     end
-                end
-
-                if not rewriteApplied then
-                    manualDecision = "blocked (no crit command found)"
+                    manualDecision = "allowed (prepared crit)"
+                elseif forcedCmdNumber and originalCmdNumber then
+                    pCmd:SetButtons(cmdButtons & (~IN_ATTACK_CONST))
+                    local ticksLeft = forcedCmdNumber - originalCmdNumber
+                    if ticksLeft < 0 then
+                        ticksLeft = 0
+                    end
+                    manualDecision = string.format("waiting (%d)", ticksLeft)
+                else
+                    pCmd:SetButtons(cmdButtons & (~IN_ATTACK_CONST))
+                    manualDecision = "waiting (searching)"
                 end
             else
-                manualDecision = "blocked (probability modifier)"
+                manualDecision = "pass (probability modifier)"
             end
         end
     end
