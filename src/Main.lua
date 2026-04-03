@@ -104,6 +104,9 @@ local runtime = {
     critBoundaryValues = {},
     critBoundaryCount = 0,
     wasAttackDown = false,
+    preparedWeaponIndex = 0,
+    preparedBaseCommand = 0,
+    preparedCritCommand = 0,
 }
 
 local weaponInfoCache = {}
@@ -905,19 +908,17 @@ local function randomIntSeeded(seed, low, high)
         end
     end
 
-    -- Fallback only when explicit engine seeded RNG is unavailable.
-    local okLua = pcall(function()
-        math.randomseed(seed)
-    end)
-    if not okLua then
+    -- Deterministic fallback without touching Lua global RNG state.
+    local span = (high - low + 1)
+    if span <= 0 then
         return nil
     end
 
-    local okRoll, rollValue = pcall(function()
-        return math.random(low, high)
-    end)
-    if okRoll and type(rollValue) == "number" then
-        return rollValue
+    local lcg = (214013 * seed + 2531011) & 0x7fffffff
+    local roll = (lcg >> 16) & 0x7fff
+    local value = low + (roll % span)
+    if type(value) == "number" then
+        return value
     end
 
     return nil
@@ -996,6 +997,41 @@ local function getSeedAttemptsForWeapon(weapon)
         return PROJECTILE_SEED_ATTEMPTS
     end
     return SEED_ATTEMPTS
+end
+
+local function getPreparedCritCommand(weapon, localPlayer, currentCommandNumber, critChance)
+    if type(currentCommandNumber) ~= "number" then
+        return nil
+    end
+
+    local weaponIndex = weapon:GetIndex()
+    if type(weaponIndex) ~= "number" then
+        return nil
+    end
+
+    local currentCmd = math.floor(currentCommandNumber)
+
+    if runtime.preparedWeaponIndex ~= weaponIndex then
+        runtime.preparedWeaponIndex = weaponIndex
+        runtime.preparedBaseCommand = 0
+        runtime.preparedCritCommand = 0
+    end
+
+    if runtime.preparedCritCommand >= currentCmd then
+        return runtime.preparedCritCommand
+    end
+
+    local maxAttempts = getSeedAttemptsForWeapon(weapon)
+    local prepared = findCritCommand(weapon, localPlayer, currentCmd, true, critChance, maxAttempts)
+    if type(prepared) == "number" then
+        runtime.preparedBaseCommand = currentCmd
+        runtime.preparedCritCommand = prepared
+        return prepared
+    end
+
+    runtime.preparedBaseCommand = currentCmd
+    runtime.preparedCritCommand = 0
+    return nil
 end
 
 local function applyCritLogic(pCmd, localPlayer, weapon)
@@ -1116,15 +1152,7 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 
                 if canRewriteCmd then
                     local originalCmdNumber = getCmdNumber(pCmd)
-                    local maxAttempts = getSeedAttemptsForWeapon(weapon)
-                    local forcedCmdNumber = findCritCommand(
-                        weapon,
-                        localPlayer,
-                        originalCmdNumber,
-                        true,
-                        baseChance,
-                        maxAttempts
-                    )
+                    local forcedCmdNumber = getPreparedCritCommand(weapon, localPlayer, originalCmdNumber, baseChance)
                     if forcedCmdNumber then
                         local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
                         local pseudo = md5PseudoRandom(forcedCmdNumber)
