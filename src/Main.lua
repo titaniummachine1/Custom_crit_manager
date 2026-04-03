@@ -10,6 +10,10 @@ local SCRIPT_CONFIG_NAME = "Crit_manager"
 local IN_ATTACK_CONST = IN_ATTACK or 1
 local IN_ATTACK2_CONST = IN_ATTACK2 or 2
 local TF2_SPY_CLASS = TF2_Spy or 8
+local KEY_C_CONST = KEY_C or 67
+local WEAPON_RANDOM_RANGE = 10000
+local SEED_ATTEMPTS = 128
+local PROJECTILE_SEED_ATTEMPTS = 16
 
 local colors = {
     white = { 255, 255, 255, 255 },
@@ -61,12 +65,15 @@ local runtime = {
     isCritBoosted = false,
     storedCrits = 0,
     minStoredShots = 0,
+    minStorageMode = 1,
+    minStorageValue = 0,
     usableCrits = 0,
     bucketCurrent = 0,
     bucketMax = 0,
     shotsUntilFull = 0,
     baseCritChance = 0,
     modifiedCritChance = 0,
+    useChancePercent = 0,
     observedCritChance = 0,
     critBanThreshold = 0,
     critBanned = false,
@@ -511,7 +518,10 @@ local function ensureMenuDefaults()
         menuSettings.CritHack = { Enabled = true, Keybind = { key = 0, mode = 2 } }
     end
     if type(menuSettings.CritHack.Keybind) ~= "table" then
-        menuSettings.CritHack.Keybind = { key = 0, mode = 2 }
+        menuSettings.CritHack.Keybind = { key = KEY_C_CONST, mode = 2 }
+    end
+    if menuSettings.CritHack.Keybind.key == nil or menuSettings.CritHack.Keybind.key == 0 then
+        menuSettings.CritHack.Keybind.key = KEY_C_CONST
     end
     if menuSettings.CritHack.Keybind.mode == nil then
         menuSettings.CritHack.Keybind.mode = 2
@@ -521,13 +531,28 @@ local function ensureMenuDefaults()
         menuSettings.Slots = {}
     end
     if type(menuSettings.Slots.Primary) ~= "table" then
-        menuSettings.Slots.Primary = { MinStoredShots = 0, ChanceModifierPercent = 100 }
+        menuSettings.Slots.Primary = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
     end
     if type(menuSettings.Slots.Secondary) ~= "table" then
-        menuSettings.Slots.Secondary = { MinStoredShots = 0, ChanceModifierPercent = 100 }
+        menuSettings.Slots.Secondary = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
     end
     if type(menuSettings.Slots.Melee) ~= "table" then
-        menuSettings.Slots.Melee = { MinStoredShots = 0, ChanceModifierPercent = 100 }
+        menuSettings.Slots.Melee = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
+    end
+
+    local slotNames = { "Primary", "Secondary", "Melee" }
+    for i = 1, #slotNames do
+        local slotName = slotNames[i]
+        local slotCfg = menuSettings.Slots[slotName]
+        if slotCfg.StorageMode == nil then
+            slotCfg.StorageMode = 1
+        end
+        if slotCfg.MinStorageValue == nil then
+            slotCfg.MinStorageValue = slotCfg.MinStoredShots or 0
+        end
+        if slotCfg.ChanceModifierPercent == nil then
+            slotCfg.ChanceModifierPercent = 100
+        end
     end
 
     if type(menuSettings.Display) ~= "table" then
@@ -662,13 +687,13 @@ local function getSlotSettings(slotName)
     local slots = menuSettings.Slots
     local slotCfg = slots[slotName]
     if slotCfg == nil then
-        slotCfg = { MinStoredShots = 0, ChanceModifierPercent = 100 }
+        slotCfg = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
         slots[slotName] = slotCfg
     end
     return slotCfg
 end
 
-local function isKeybindActive(bind)
+local function isKeybindActive(bind, pCmd)
     if type(bind) ~= "table" then
         return false
     end
@@ -681,6 +706,13 @@ local function isKeybindActive(bind)
     end
 
     if key == 0 then
+        local cHeld = input.IsButtonDown(KEY_C_CONST)
+        if cHeld then
+            return true
+        end
+        if pCmd then
+            return (pCmd:GetButtons() & IN_ATTACK2_CONST) ~= 0
+        end
         return false
     end
 
@@ -777,6 +809,250 @@ local function calcWeaponInfo(weapon)
     return info
 end
 
+local function getCmdNumber(pCmd)
+    local okMethod, methodValue = pcall(function()
+        return pCmd:GetCommandNumber()
+    end)
+    if okMethod and type(methodValue) == "number" then
+        return methodValue
+    end
+
+    local okField, fieldValue = pcall(function()
+        return pCmd.command_number
+    end)
+    if okField and type(fieldValue) == "number" then
+        return fieldValue
+    end
+
+    return nil
+end
+
+local function setCmdNumber(pCmd, value)
+    local safeValue = math.floor(value)
+
+    local okMethod = pcall(function()
+        pCmd:SetCommandNumber(safeValue)
+    end)
+    if okMethod then
+        return true
+    end
+
+    local okField = pcall(function()
+        pCmd.command_number = safeValue
+    end)
+    if okField then
+        return true
+    end
+
+    return false
+end
+
+local function setCmdRandomSeed(pCmd, value)
+    local safeValue = math.floor(value)
+
+    local okMethod = pcall(function()
+        pCmd:SetRandomSeed(safeValue)
+    end)
+    if okMethod then
+        return true
+    end
+
+    local okField = pcall(function()
+        pCmd.random_seed = safeValue
+    end)
+    if okField then
+        return true
+    end
+
+    return false
+end
+
+local function md5PseudoRandom(commandNumber)
+    local md5Fn = rawget(_G, "MD5_PseudoRandom")
+    if type(md5Fn) == "function" then
+        local okGlobal, globalValue = pcall(function()
+            return md5Fn(commandNumber)
+        end)
+        if okGlobal and type(globalValue) == "number" then
+            return globalValue
+        end
+    end
+
+    local clientTable = rawget(_G, "client")
+    if type(clientTable) == "table" then
+        local clientMd5Fn = clientTable["MD5_PseudoRandom"]
+        if type(clientMd5Fn) == "function" then
+            local okClient, clientValue = pcall(function()
+                return clientMd5Fn(commandNumber)
+            end)
+            if okClient and type(clientValue) == "number" then
+                return clientValue
+            end
+        end
+    end
+
+    return nil
+end
+
+local function randomIntSeeded(seed, low, high)
+    local clientTable = rawget(_G, "client")
+    if type(clientTable) == "table" then
+        local seededRandFn = clientTable["RandomIntSeeded"]
+        if type(seededRandFn) == "function" then
+            local okEngine, engineValue = pcall(function()
+                return seededRandFn(seed, low, high)
+            end)
+            if okEngine and type(engineValue) == "number" then
+                return engineValue
+            end
+        end
+    end
+
+    -- Fallback only when explicit engine seeded RNG is unavailable.
+    local okLua = pcall(function()
+        math.randomseed(seed)
+    end)
+    if not okLua then
+        return nil
+    end
+
+    local okRoll, rollValue = pcall(function()
+        return math.random(low, high)
+    end)
+    if okRoll and type(rollValue) == "number" then
+        return rollValue
+    end
+
+    return nil
+end
+
+local function getLocalPlayerIndex(localPlayer)
+    local okMethod, methodValue = pcall(function()
+        return localPlayer:GetIndex()
+    end)
+    if okMethod and type(methodValue) == "number" then
+        return methodValue
+    end
+
+    local okClient, clientValue = pcall(function()
+        return client.GetLocalPlayerIndex()
+    end)
+    if okClient and type(clientValue) == "number" then
+        return clientValue
+    end
+
+    return 1
+end
+
+local function getCurrentCritSeed(weapon)
+    local okMethod, methodValue = pcall(function()
+        return weapon:GetCurrentSeed()
+    end)
+    if okMethod and type(methodValue) == "number" then
+        return methodValue
+    end
+
+    local okAlt, altValue = pcall(function()
+        return weapon:GetCritSeed()
+    end)
+    if okAlt and type(altValue) == "number" then
+        return altValue
+    end
+
+    return nil
+end
+
+local function commandToSeed(commandNumber, weaponEntIndex, localPlayerIndex, isMelee)
+    local pseudo = md5PseudoRandom(commandNumber)
+    if type(pseudo) ~= "number" then
+        return nil
+    end
+
+    local maskedPseudo = pseudo & 0x7fffffff
+    local mask = 0
+    if isMelee then
+        mask = (weaponEntIndex << 16) | (localPlayerIndex << 8)
+    else
+        mask = (weaponEntIndex << 8) | localPlayerIndex
+    end
+
+    return maskedPseudo ~ mask
+end
+
+local function isCritCommand(commandNumber, weapon, localPlayer, wantCrit, critChance)
+    local localPlayerIndex = getLocalPlayerIndex(localPlayer)
+    local weaponEntIndex = weapon:GetIndex()
+    local isMelee = weapon:IsMeleeWeapon()
+    local seed = commandToSeed(commandNumber, weaponEntIndex, localPlayerIndex, isMelee)
+    if type(seed) ~= "number" then
+        return false
+    end
+
+    local currentSeed = getCurrentCritSeed(weapon)
+    if type(currentSeed) == "number" and currentSeed == seed then
+        return false
+    end
+
+    local randomRoll = randomIntSeeded(seed, 0, WEAPON_RANDOM_RANGE - 1)
+    if type(randomRoll) ~= "number" then
+        return false
+    end
+
+    local chance = critChance
+    if chance < 0 then
+        chance = 0
+    elseif chance > 1 then
+        chance = 1
+    end
+    local range = math.floor(chance * WEAPON_RANDOM_RANGE)
+    local isCrit = randomRoll < range
+    if wantCrit then
+        return isCrit
+    end
+    return not isCrit
+end
+
+local function findCritCommand(weapon, localPlayer, commandNumber, wantCrit, critChance, maxAttempts)
+    if type(commandNumber) ~= "number" then
+        return nil
+    end
+
+    local attempts = maxAttempts or SEED_ATTEMPTS
+    if attempts < 1 then
+        attempts = 1
+    end
+
+    local startCommand = math.floor(commandNumber)
+    for i = startCommand, startCommand + attempts do
+        if isCritCommand(i, weapon, localPlayer, wantCrit, critChance) then
+            return i
+        end
+    end
+
+    return nil
+end
+
+local function isProjectileLauncherClass(className)
+    return className == "CTFRocketLauncher"
+        or className == "CTFRocketLauncher_DirectHit"
+        or className == "CTFGrenadeLauncher"
+        or className == "CTFPipebombLauncher"
+        or className == "CTFCannon"
+end
+
+local function shouldRewriteCmdForWeapon(weapon)
+    local className = weapon:GetClass()
+    return className ~= nil
+end
+
+local function getSeedAttemptsForWeapon(weapon)
+    local className = weapon:GetClass()
+    if isProjectileLauncherClass(className) then
+        return PROJECTILE_SEED_ATTEMPTS
+    end
+    return SEED_ATTEMPTS
+end
+
 local function applyCritLogic(pCmd, localPlayer, weapon)
     assert(pCmd, "applyCritLogic: pCmd missing")
     assert(localPlayer, "applyCritLogic: localPlayer missing")
@@ -793,6 +1069,11 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
 
     local modifierPct = slotSettings.ChanceModifierPercent or 100
     local modifiedChance = baseChance * (modifierPct / 100)
+    if modifiedChance < 0 then
+        modifiedChance = 0
+    elseif modifiedChance > 1 then
+        modifiedChance = 1
+    end
     local observedChance = weapon:CalcObservedCritChance() or 0
 
     local damageStats = weapon:GetWeaponDamageStats() or {}
@@ -811,8 +1092,22 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
         critBannedByChance = observedChance >= cmpCritChance
     end
 
-    local minStoredShots = slotSettings.MinStoredShots or 0
+    local storageMode = slotSettings.StorageMode or 1
+    local minStorageValue = slotSettings.MinStorageValue
+    if minStorageValue == nil then
+        minStorageValue = slotSettings.MinStoredShots or 0
+    end
+    if type(minStorageValue) ~= "number" then
+        minStorageValue = 0
+    end
+
     local storedCrits = info.storedCrits or 0
+    local minStoredShots = 0
+    if storageMode == 2 then
+        minStoredShots = math.floor((storedCrits * (minStorageValue / 100)) + 0.5)
+    else
+        minStoredShots = math.floor(minStorageValue)
+    end
     local usableCrits = math.max(0, storedCrits - minStoredShots)
 
     local svAllowCrit = weapon:CanRandomCrit()
@@ -839,7 +1134,7 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     local manualDecision = "idle"
     local isCritBoosted = localPlayer:IsCritBoosted() or localPlayer:InCond(TFCond_CritCola)
     if menuSettings.CritHack.Enabled then
-        manualActive = isKeybindActive(menuSettings.CritHack.Keybind)
+        manualActive = isKeybindActive(menuSettings.CritHack.Keybind, pCmd)
     end
 
     local attackPressed = (pCmd:GetButtons() & IN_ATTACK_CONST) ~= 0
@@ -854,18 +1149,45 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
             pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
             manualDecision = "blocked (minimum storage)"
         else
-            local decisionChance = 1.0
-            if baseChance > 0 then
-                decisionChance = math.min(1.0, math.max(0.0, modifiedChance / baseChance))
+            local canRewriteCmd = shouldRewriteCmdForWeapon(weapon)
+            local rewriteApplied = false
+
+            if canRewriteCmd then
+                local originalCmdNumber = getCmdNumber(pCmd)
+                local maxAttempts = getSeedAttemptsForWeapon(weapon)
+                local forcedCmdNumber = findCritCommand(
+                    weapon,
+                    localPlayer,
+                    originalCmdNumber,
+                    true,
+                    baseChance,
+                    maxAttempts
+                )
+                if forcedCmdNumber then
+                    local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
+                    local pseudo = md5PseudoRandom(forcedCmdNumber)
+                    local seedSetOk = false
+                    if type(pseudo) == "number" then
+                        local maskedSeed = pseudo & 0x7fffffff
+                        seedSetOk = setCmdRandomSeed(pCmd, maskedSeed)
+                    end
+
+                    if cmdSetOk then
+                        rewriteApplied = true
+                        if seedSetOk then
+                            manualDecision = "allowed (forced cmd+seed)"
+                        else
+                            manualDecision = "allowed (forced cmd)"
+                        end
+                    end
+                end
             end
 
-            if math.random() <= decisionChance then
-                pCmd:SetButtons(pCmd:GetButtons() | IN_ATTACK2_CONST)
-                manualDecision = "allowed"
-            else
-                pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
-                manualDecision = "blocked (chance modifier)"
+            if not rewriteApplied then
+                manualDecision = "allowed (fallback button)"
             end
+
+            pCmd:SetButtons(pCmd:GetButtons() | IN_ATTACK2_CONST)
         end
     end
 
@@ -874,12 +1196,15 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     runtime.isCritBoosted = isCritBoosted
     runtime.storedCrits = storedCrits
     runtime.minStoredShots = minStoredShots
+    runtime.minStorageMode = storageMode
+    runtime.minStorageValue = minStorageValue
     runtime.usableCrits = usableCrits
     runtime.bucketCurrent = info.bucketCurrent or 0
     runtime.bucketMax = info.bucketMax or 0
     runtime.shotsUntilFull = info.shotsUntilFull or 0
     runtime.baseCritChance = baseChance * 100
     runtime.modifiedCritChance = modifiedChance * 100
+    runtime.useChancePercent = modifiedChance * 100
     runtime.observedCritChance = observedChance * 100
     runtime.critBanThreshold = critBanThreshold * 100
     runtime.critBanned = critBannedByChance
@@ -980,6 +1305,7 @@ local function drawIndicator(localPlayer, weapon)
 
     draw.SetFont(fontId)
     local menuOpen = gui.IsMenuOpen()
+    local showDetailedText = menuOpen
     local panelW = 340
     local panelH = 62
     local panelTopOffset = 34
@@ -988,6 +1314,19 @@ local function drawIndicator(localPlayer, weapon)
     local leftPad = 6
     local rightInset = 8
     local barW = 236
+
+    if showDetailedText then
+        local infoRows = 0
+        if menuSettings.Display.ShowBucket then
+            infoRows = infoRows + 1
+        end
+        if menuSettings.Display.ShowChance then
+            infoRows = infoRows + 1
+        end
+
+        panelW = 352
+        panelH = panelTopOffset + barH + 10 + (infoRows * rowH) + 8
+    end
 
     ensureDisplayPosition(barW, barH + rowH + 2)
 
@@ -1229,6 +1568,41 @@ local function drawIndicator(localPlayer, weapon)
             )
         elseif runtime.readyTransitionPhase == 0 then
             -- No-op; drawn in transition branch above.
+        end
+    end
+
+    if showDetailedText then
+        local infoY = barY + barH + 4
+        if menuSettings.Display.ShowBucket then
+            local reserveText = "shots"
+            if runtime.minStorageMode == 2 then
+                reserveText = "%"
+            end
+
+            local bucketLine = string.format(
+                "Bucket %d/%d  Stored %d  Min %d%s  Usable %d",
+                math.floor(runtime.bucketCurrent or 0),
+                math.floor(runtime.bucketMax or 0),
+                math.floor(runtime.storedCrits or 0),
+                math.floor(runtime.minStorageValue or 0),
+                reserveText,
+                math.floor(runtime.usableCrits or 0)
+            )
+            draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
+            draw.Text(baseX, infoY, bucketLine)
+            infoY = infoY + rowH
+        end
+
+        if menuSettings.Display.ShowChance then
+            local chanceLine = string.format(
+                "Chance Base %.2f%%  Use %.2f%%  Observed %.2f%%  Slot %s",
+                runtime.baseCritChance or 0,
+                runtime.useChancePercent or 0,
+                runtime.observedCritChance or 0,
+                runtime.lastSlotName or "Primary"
+            )
+            draw.Color(colors.gray[1], colors.gray[2], colors.gray[3], colors.gray[4])
+            draw.Text(baseX, infoY, chanceLine)
         end
     end
 

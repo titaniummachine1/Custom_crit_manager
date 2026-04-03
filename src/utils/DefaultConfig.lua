@@ -10,20 +10,23 @@ DefaultConfig.Menu = {
     CritHack = {
         Enabled = true,
         -- mode: 1 = Always, 2 = Hold, 3 = Toggle
-        Keybind = { key = 0, mode = 2 },
+        Keybind = { key = 67, mode = 2 },
     },
 
     Slots = {
         Primary = {
-            MinStoredShots = 0,
+            StorageMode = 1,
+            MinStorageValue = 0,
             ChanceModifierPercent = 100,
         },
         Secondary = {
-            MinStoredShots = 0,
+            StorageMode = 1,
+            MinStorageValue = 0,
             ChanceModifierPercent = 100,
         },
         Melee = {
-            MinStoredShots = 0,
+            StorageMode = 1,
+            MinStorageValue = 0,
             ChanceModifierPercent = 100,
         },
     },
