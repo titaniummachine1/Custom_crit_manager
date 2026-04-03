@@ -531,13 +531,13 @@ local function ensureMenuDefaults()
         menuSettings.Slots = {}
     end
     if type(menuSettings.Slots.Primary) ~= "table" then
-        menuSettings.Slots.Primary = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
+        menuSettings.Slots.Primary = { StorageMode = 1, MinStorageValue = 0, UseProbabilityModifier = false, ChanceModifierPercent = 100 }
     end
     if type(menuSettings.Slots.Secondary) ~= "table" then
-        menuSettings.Slots.Secondary = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
+        menuSettings.Slots.Secondary = { StorageMode = 1, MinStorageValue = 0, UseProbabilityModifier = false, ChanceModifierPercent = 100 }
     end
     if type(menuSettings.Slots.Melee) ~= "table" then
-        menuSettings.Slots.Melee = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
+        menuSettings.Slots.Melee = { StorageMode = 1, MinStorageValue = 0, UseProbabilityModifier = false, ChanceModifierPercent = 100 }
     end
 
     local slotNames = { "Primary", "Secondary", "Melee" }
@@ -549,6 +549,9 @@ local function ensureMenuDefaults()
         end
         if slotCfg.MinStorageValue == nil then
             slotCfg.MinStorageValue = slotCfg.MinStoredShots or 0
+        end
+        if slotCfg.UseProbabilityModifier == nil then
+            slotCfg.UseProbabilityModifier = false
         end
         if slotCfg.ChanceModifierPercent == nil then
             slotCfg.ChanceModifierPercent = 100
@@ -687,7 +690,7 @@ local function getSlotSettings(slotName)
     local slots = menuSettings.Slots
     local slotCfg = slots[slotName]
     if slotCfg == nil then
-        slotCfg = { StorageMode = 1, MinStorageValue = 0, ChanceModifierPercent = 100 }
+        slotCfg = { StorageMode = 1, MinStorageValue = 0, UseProbabilityModifier = false, ChanceModifierPercent = 100 }
         slots[slotName] = slotCfg
     end
     return slotCfg
@@ -1068,11 +1071,15 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     end
 
     local modifierPct = slotSettings.ChanceModifierPercent or 100
-    local modifiedChance = baseChance * (modifierPct / 100)
-    if modifiedChance < 0 then
-        modifiedChance = 0
-    elseif modifiedChance > 1 then
-        modifiedChance = 1
+    if modifierPct < 0 then
+        modifierPct = 0
+    elseif modifierPct > 100 then
+        modifierPct = 100
+    end
+    local useProbabilityModifier = slotSettings.UseProbabilityModifier == true
+    local manualUseChance = 1.0
+    if useProbabilityModifier then
+        manualUseChance = modifierPct / 100
     end
     local observedChance = weapon:CalcObservedCritChance() or 0
 
@@ -1149,45 +1156,57 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
             pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
             manualDecision = "blocked (minimum storage)"
         else
-            local canRewriteCmd = shouldRewriteCmdForWeapon(weapon)
-            local rewriteApplied = false
-
-            if canRewriteCmd then
-                local originalCmdNumber = getCmdNumber(pCmd)
-                local maxAttempts = getSeedAttemptsForWeapon(weapon)
-                local forcedCmdNumber = findCritCommand(
-                    weapon,
-                    localPlayer,
-                    originalCmdNumber,
-                    true,
-                    baseChance,
-                    maxAttempts
-                )
-                if forcedCmdNumber then
-                    local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
-                    local pseudo = md5PseudoRandom(forcedCmdNumber)
-                    local seedSetOk = false
-                    if type(pseudo) == "number" then
-                        local maskedSeed = pseudo & 0x7fffffff
-                        seedSetOk = setCmdRandomSeed(pCmd, maskedSeed)
-                    end
-
-                    if cmdSetOk then
-                        rewriteApplied = true
-                        if seedSetOk then
-                            manualDecision = "allowed (forced cmd+seed)"
-                        else
-                            manualDecision = "allowed (forced cmd)"
-                        end
-                    end
+            local shouldAttemptManualCrit = true
+            if useProbabilityModifier then
+                if math.random() > manualUseChance then
+                    shouldAttemptManualCrit = false
                 end
             end
 
-            if not rewriteApplied then
-                manualDecision = "allowed (fallback button)"
-            end
+            if shouldAttemptManualCrit then
+                local canRewriteCmd = shouldRewriteCmdForWeapon(weapon)
+                local rewriteApplied = false
 
-            pCmd:SetButtons(pCmd:GetButtons() | IN_ATTACK2_CONST)
+                if canRewriteCmd then
+                    local originalCmdNumber = getCmdNumber(pCmd)
+                    local maxAttempts = getSeedAttemptsForWeapon(weapon)
+                    local forcedCmdNumber = findCritCommand(
+                        weapon,
+                        localPlayer,
+                        originalCmdNumber,
+                        true,
+                        baseChance,
+                        maxAttempts
+                    )
+                    if forcedCmdNumber then
+                        local cmdSetOk = setCmdNumber(pCmd, forcedCmdNumber)
+                        local pseudo = md5PseudoRandom(forcedCmdNumber)
+                        local seedSetOk = false
+                        if type(pseudo) == "number" then
+                            local maskedSeed = pseudo & 0x7fffffff
+                            seedSetOk = setCmdRandomSeed(pCmd, maskedSeed)
+                        end
+
+                        if cmdSetOk then
+                            rewriteApplied = true
+                            if seedSetOk then
+                                manualDecision = "allowed (forced cmd+seed)"
+                            else
+                                manualDecision = "allowed (forced cmd)"
+                            end
+                        end
+                    end
+                end
+
+                if not rewriteApplied then
+                    manualDecision = "allowed (fallback button)"
+                end
+
+                pCmd:SetButtons(pCmd:GetButtons() | IN_ATTACK2_CONST)
+            else
+                pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))
+                manualDecision = "blocked (probability modifier)"
+            end
         end
     end
 
@@ -1203,8 +1222,8 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     runtime.bucketMax = info.bucketMax or 0
     runtime.shotsUntilFull = info.shotsUntilFull or 0
     runtime.baseCritChance = baseChance * 100
-    runtime.modifiedCritChance = modifiedChance * 100
-    runtime.useChancePercent = modifiedChance * 100
+    runtime.modifiedCritChance = manualUseChance * 100
+    runtime.useChancePercent = manualUseChance * 100
     runtime.observedCritChance = observedChance * 100
     runtime.critBanThreshold = critBanThreshold * 100
     runtime.critBanned = critBannedByChance
@@ -1213,9 +1232,21 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
     runtime.requiredDamage = math.max(0, requiredDamage)
     runtime.manualKeyActive = manualActive
     runtime.manualDecision = manualDecision
-    runtime.slotModifierPrimary = (menuSettings.Slots.Primary.ChanceModifierPercent or 100)
-    runtime.slotModifierSecondary = (menuSettings.Slots.Secondary.ChanceModifierPercent or 100)
-    runtime.slotModifierMelee = (menuSettings.Slots.Melee.ChanceModifierPercent or 100)
+    if menuSettings.Slots.Primary.UseProbabilityModifier then
+        runtime.slotModifierPrimary = (menuSettings.Slots.Primary.ChanceModifierPercent or 100)
+    else
+        runtime.slotModifierPrimary = 100
+    end
+    if menuSettings.Slots.Secondary.UseProbabilityModifier then
+        runtime.slotModifierSecondary = (menuSettings.Slots.Secondary.ChanceModifierPercent or 100)
+    else
+        runtime.slotModifierSecondary = 100
+    end
+    if menuSettings.Slots.Melee.UseProbabilityModifier then
+        runtime.slotModifierMelee = (menuSettings.Slots.Melee.ChanceModifierPercent or 100)
+    else
+        runtime.slotModifierMelee = 100
+    end
 
     local critCostNow = 0
     local okCritCost, critCostValue = pcall(function()

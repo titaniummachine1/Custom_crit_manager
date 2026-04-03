@@ -3,6 +3,7 @@
 local Serializer = require("utils.Serializer")
 
 local Config = {}
+local KEY_LSHIFT_CONST = KEY_LSHIFT or 160
 
 local function getConfigPath(luaFileName, folderName)
     local finalFolder = folderName or string.format([[Lua %s]], luaFileName)
@@ -60,7 +61,7 @@ function Config.LoadCFG(defaultConfig, luaFileName, folderName)
     end
 
     local ok, cfg = pcall(chunk)
-    local shiftHeld = input.IsButtonDown(KEY_LSHIFT)
+    local shiftHeld = input.IsButtonDown(KEY_LSHIFT_CONST)
     if not ok or type(cfg) ~= "table" or shiftHeld then
         if shiftHeld then
             printc(255, 200, 100, 255, "[Config] SHIFT held - regenerating config...")

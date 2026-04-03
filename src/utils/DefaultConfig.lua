@@ -17,16 +17,19 @@ DefaultConfig.Menu = {
         Primary = {
             StorageMode = 1,
             MinStorageValue = 0,
+            UseProbabilityModifier = false,
             ChanceModifierPercent = 100,
         },
         Secondary = {
             StorageMode = 1,
             MinStorageValue = 0,
+            UseProbabilityModifier = false,
             ChanceModifierPercent = 100,
         },
         Melee = {
             StorageMode = 1,
             MinStorageValue = 0,
+            UseProbabilityModifier = false,
             ChanceModifierPercent = 100,
         },
     },

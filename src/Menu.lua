@@ -6,6 +6,7 @@ local TimMenu = require("TimMenu")
 local MenuUI = {}
 
 local activationModes = { "Always", "Hold", "Toggle" }
+local storageModes = { "Shots", "Percent" }
 
 local function ensureKeybindTable(bind)
     if type(bind) == "table" then
@@ -20,12 +21,35 @@ local function renderSlotSettings(menu, slotName)
     local slot = menu.Slots[slotName]
     assert(slot, "renderSlotSettings: slot config missing")
 
+    if slot.StorageMode == nil then
+        slot.StorageMode = 1
+    end
+    if slot.MinStorageValue == nil then
+        slot.MinStorageValue = slot.MinStoredShots or 0
+    end
+    if slot.ChanceModifierPercent == nil then
+        slot.ChanceModifierPercent = 100
+    end
+    if slot.UseProbabilityModifier == nil then
+        slot.UseProbabilityModifier = false
+    end
+
     TimMenu.BeginSector(slotName)
-    slot.MinStoredShots = TimMenu.Slider("Min Stored Crits (shots)", slot.MinStoredShots or 0, 0, 25, 1)
+    slot.StorageMode = TimMenu.Selector("Storage Mode", slot.StorageMode or 1, storageModes)
     TimMenu.NextLine()
-    slot.ChanceModifierPercent = TimMenu.Slider("Crit Chance Modifier %", slot.ChanceModifierPercent or 100, 0, 300, 1)
+    if slot.StorageMode == 2 then
+        slot.MinStorageValue = TimMenu.Slider("Min Stored Crits (%)", slot.MinStorageValue or 0, 0, 100, 1)
+    else
+        slot.MinStorageValue = TimMenu.Slider("Min Stored Crits (shots)", slot.MinStorageValue or 0, 0, 25, 1)
+    end
     TimMenu.NextLine()
-    TimMenu.Text("100% = normal crit chance")
+    slot.UseProbabilityModifier = TimMenu.Checkbox("Enable Probability Modifier", slot.UseProbabilityModifier)
+    TimMenu.NextLine()
+    slot.ChanceModifierPercent = TimMenu.Slider("Manual Crit Chance (%)", slot.ChanceModifierPercent or 100, 0, 100, 1)
+    TimMenu.NextLine()
+    TimMenu.Text("Disabled = regular crit hack (always force on key hold)")
+    TimMenu.NextLine()
+    TimMenu.Text("Enabled = this percent is absolute manual crit use chance")
     TimMenu.NextLine()
     TimMenu.EndSector()
 end
@@ -40,9 +64,12 @@ function MenuUI.Render(menu, runtimeState)
     menu.CritHack = menu.CritHack or { Enabled = true, Keybind = { key = 0, mode = 1 } }
     menu.CritHack.Keybind = ensureKeybindTable(menu.CritHack.Keybind)
     menu.Slots = menu.Slots or {}
-    menu.Slots.Primary = menu.Slots.Primary or { MinStoredShots = 0, ChanceModifierPercent = 100 }
-    menu.Slots.Secondary = menu.Slots.Secondary or { MinStoredShots = 0, ChanceModifierPercent = 100 }
-    menu.Slots.Melee = menu.Slots.Melee or { MinStoredShots = 0, ChanceModifierPercent = 100 }
+    menu.Slots.Primary = menu.Slots.Primary or
+    { MinStoredShots = 0, ChanceModifierPercent = 100, UseProbabilityModifier = false }
+    menu.Slots.Secondary = menu.Slots.Secondary or
+    { MinStoredShots = 0, ChanceModifierPercent = 100, UseProbabilityModifier = false }
+    menu.Slots.Melee = menu.Slots.Melee or
+    { MinStoredShots = 0, ChanceModifierPercent = 100, UseProbabilityModifier = false }
     menu.Display = menu.Display or { Enabled = true, X = 10, Y = 350, ShowBucket = true, ShowChance = true }
 
     local tabs = menu.tabs or { "General", "Primary", "Secondary", "Melee", "Display" }
@@ -58,6 +85,8 @@ function MenuUI.Render(menu, runtimeState)
         bind.key = TimMenu.Keybind("Manual Crit Key", bind.key or 0)
         TimMenu.NextLine()
         bind.mode = TimMenu.Selector("Manual Crit Key Mode", bind.mode or 1, activationModes)
+        TimMenu.NextLine()
+        TimMenu.Text("If key is None, RMB/IN_ATTACK2 acts as auto crit key")
         TimMenu.NextLine()
         TimMenu.Text("Key mode uses Lmaobox key input semantics.")
         TimMenu.NextLine()
