@@ -709,14 +709,7 @@ local function isKeybindActive(bind, pCmd)
     end
 
     if key == 0 then
-        local cHeld = input.IsButtonDown(KEY_C_CONST)
-        if cHeld then
-            return true
-        end
-        if pCmd then
-            return (pCmd:GetButtons() & IN_ATTACK2_CONST) ~= 0
-        end
-        return false
+        return input.IsButtonDown(KEY_C_CONST)
     end
 
     local isDown = input.IsButtonDown(key)
@@ -1144,7 +1137,8 @@ local function applyCritLogic(pCmd, localPlayer, weapon)
         manualActive = isKeybindActive(menuSettings.CritHack.Keybind, pCmd)
     end
 
-    local attackPressed = (pCmd:GetButtons() & IN_ATTACK_CONST) ~= 0
+    local cmdButtons = pCmd:GetButtons()
+    local attackPressed = (cmdButtons & IN_ATTACK_CONST) ~= 0
     if manualActive and attackPressed then
         if not serverAllowCrit or not svAllowCrit then
             pCmd:SetButtons(pCmd:GetButtons() & (~IN_ATTACK2_CONST))

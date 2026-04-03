@@ -10,11 +10,11 @@ local storageModes = { "Shots", "Percent" }
 
 local function ensureKeybindTable(bind)
     if type(bind) == "table" then
-        bind.key = bind.key or 0
-        bind.mode = bind.mode or 1
+        bind.key = bind.key or 67
+        bind.mode = bind.mode or 2
         return bind
     end
-    return { key = 0, mode = 1 }
+    return { key = 67, mode = 2 }
 end
 
 local function renderSlotSettings(menu, slotName)
@@ -61,7 +61,7 @@ function MenuUI.Render(menu, runtimeState)
         return
     end
 
-    menu.CritHack = menu.CritHack or { Enabled = true, Keybind = { key = 0, mode = 1 } }
+    menu.CritHack = menu.CritHack or { Enabled = true, Keybind = { key = 67, mode = 2 } }
     menu.CritHack.Keybind = ensureKeybindTable(menu.CritHack.Keybind)
     menu.Slots = menu.Slots or {}
     menu.Slots.Primary = menu.Slots.Primary or
@@ -86,7 +86,7 @@ function MenuUI.Render(menu, runtimeState)
         TimMenu.NextLine()
         bind.mode = TimMenu.Selector("Manual Crit Key Mode", bind.mode or 1, activationModes)
         TimMenu.NextLine()
-        TimMenu.Text("If key is None, RMB/IN_ATTACK2 acts as auto crit key")
+        TimMenu.Text("Default key is C (hold). Force runs on IN_ATTACK shots only.")
         TimMenu.NextLine()
         TimMenu.Text("Key mode uses Lmaobox key input semantics.")
         TimMenu.NextLine()
