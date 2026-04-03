@@ -356,18 +356,10 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.Color(40, 40, 40, 200)
     draw.FilledRect(safeX, safeY, safeX + safeW, safeY + safeH)
 
-    -- Red fill for the full bucket amount.
+    -- Red fills only the non-crit region. Crit cost region stays dark for drawStoredCritHints.
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
-    draw.FilledRect(safeX, safeY, safeX + currentFill, safeY + safeH)
-
-    -- Current crit cost: solid green painted over red, same opacity as red.
-    if costClamped > 0 and greenStart < greenEnd then
-        draw.Color(colors.green[1], colors.green[2], colors.green[3], 255)
-        draw.FilledRect(greenStart, safeY, greenEnd, safeY + safeH)
-    end
-
-    -- Texture over everything (red + green).
-    drawFillGradient(safeX, safeY, safeX + currentFill, safeH)
+    draw.FilledRect(safeX, safeY, greenStart, safeY + safeH)
+    drawFillGradient(safeX, safeY, greenStart, safeH)
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
     draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
@@ -433,7 +425,7 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local safeCurrent = math.max(0, math.floor(currentValue or 0))
     local count = math.max(0, math.floor(boundaryCount or 0))
 
-    if count <= 1 then
+    if count < 1 then
         return
     end
 
@@ -442,12 +434,27 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local safeW = math.floor(w)
     local safeH = math.floor(h)
 
-    -- Segments 2..5: transparent cyan directly over the red+textured bar.
-    -- No dark backing, no extra texture -- they just tint what's already there.
+    -- Seg1: current crit cost region. Dark bg is already there (drawForcePreviewBar left it dark).
+    -- Paint solid green + texture so it matches the red region visually but is green.
+    local seg1Left = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
+    local seg1Right = safeX + math.floor((safeCurrent / safeMax) * safeW)
+    if seg1Right > seg1Left then
+        draw.Color(colors.green[1], colors.green[2], colors.green[3], 255)
+        draw.FilledRect(seg1Left, safeY, seg1Right, safeY + safeH)
+        drawFillGradient(seg1Left, safeY, seg1Right, safeH)
+        -- Divider at left edge of seg1
+        draw.Color(255, 255, 255, 80)
+        draw.FilledRect(seg1Left, safeY + 1, seg1Left + 1, safeY + safeH - 1)
+    end
+
+    if count <= 1 then
+        return
+    end
+
+    -- Segs 2..5: transparent green on dark bg. Green fades to dark (not to orange).
     local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
-    local alphas = { 110, 70, 40, 20 }
+    local alphas = { 180, 120, 70, 35 }
     local maxSegments = math.min(count, 5)
-    local firstLeftX = -1
 
     for i = 2, maxSegments do
         local nextValue = boundaryValues[i] or 0
@@ -462,24 +469,15 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
 
         if leftX >= rightX then break end
 
-        -- Paint green directly over existing red+texture bar, same green RGB, only alpha differs
-        local alpha = alphas[i - 1] or 15
+        local alpha = alphas[i - 1] or 20
         draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
         draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
+        drawFillGradient(leftX, safeY, rightX, safeH)
 
-        if firstLeftX == -1 then firstLeftX = leftX end
-
-        -- White divider at the left boundary
         draw.Color(255, 255, 255, 80)
         draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
 
         prevValue = nextValue
-    end
-
-    -- Re-apply texture over prediction range so it looks consistent with the rest of the bar
-    local predRight = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
-    if firstLeftX ~= -1 and predRight > firstLeftX then
-        drawFillGradient(firstLeftX, safeY, predRight, safeH)
     end
 end
 
