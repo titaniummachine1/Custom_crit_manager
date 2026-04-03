@@ -258,10 +258,8 @@ local function drawFillGradient(x, y, right, h)
         return
     end
 
-    -- Textured cyan highlight with a subtle white sheen on top.
-    draw.Color(23, 165, 239, 76)
-    draw.TexturedRect(barGradientMask, safeX, safeY, safeRight, safeY + safeH)
-    draw.Color(255, 255, 255, 34)
+    -- Pure white shine on top -- no color tint so it never shifts fills below it.
+    draw.Color(255, 255, 255, 60)
     draw.TexturedRect(barGradientMask, safeX, safeY, safeRight, safeY + safeH)
 end
 
@@ -356,10 +354,10 @@ local function drawForcePreviewBar(x, y, w, h, currentValue, costValue, maxValue
     draw.Color(40, 40, 40, 200)
     draw.FilledRect(safeX, safeY, safeX + safeW, safeY + safeH)
 
-    -- Red fills only the non-crit region. Crit cost region stays dark for drawStoredCritHints.
+    -- Red fills only the non-crit region. Crit cost region stays dark.
+    -- No texture here -- texture is applied once at end of drawStoredCritHints.
     draw.Color(colors.red[1], colors.red[2], colors.red[3], colors.red[4])
     draw.FilledRect(safeX, safeY, greenStart, safeY + safeH)
-    drawFillGradient(safeX, safeY, greenStart, safeH)
 
     draw.Color(colors.white[1], colors.white[2], colors.white[3], colors.white[4])
     draw.OutlinedRect(safeX, safeY, safeX + safeW, safeY + safeH)
@@ -425,59 +423,75 @@ local function drawStoredCritHints(x, y, w, h, currentValue, maxValue, boundaryV
     local safeCurrent = math.max(0, math.floor(currentValue or 0))
     local count = math.max(0, math.floor(boundaryCount or 0))
 
-    if count < 1 then
-        return
-    end
-
     local safeX = math.floor(x)
     local safeY = math.floor(y)
     local safeW = math.floor(w)
     local safeH = math.floor(h)
 
-    -- Seg1: current crit cost region. Dark bg is already there (drawForcePreviewBar left it dark).
-    -- Paint solid green + texture so it matches the red region visually but is green.
-    local seg1Left = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
+    local seg1Left  = safeX + math.floor((math.max(0, math.floor(boundaryValues[1] or 0)) / safeMax) * safeW)
     local seg1Right = safeX + math.floor((safeCurrent / safeMax) * safeW)
-    if seg1Right > seg1Left then
+    local fullFillRight = seg1Right
+
+    -- Seg1: solid green on dark bg (drawForcePreviewBar left it dark)
+    if count >= 1 and seg1Right > seg1Left then
         draw.Color(colors.green[1], colors.green[2], colors.green[3], 255)
         draw.FilledRect(seg1Left, safeY, seg1Right, safeY + safeH)
-        drawFillGradient(seg1Left, safeY, seg1Right, safeH)
-        -- Divider at left edge of seg1
-        draw.Color(255, 255, 255, 80)
+    end
+
+    -- Segs 2..5: logarithmic alpha decay (~65% each step) so each step is clearly distinct
+    -- Draws on dark bg so green fades cleanly to dark without color mixing with red
+    if count >= 2 then
+        local logAlphas = { 190, 130, 80, 45 }
+        local maxSegments = math.min(count, 5)
+        local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
+
+        for i = 2, maxSegments do
+            local nextValue = boundaryValues[i] or 0
+            if nextValue < 0 then nextValue = 0
+            elseif nextValue > safeMax then nextValue = safeMax end
+
+            local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
+            local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
+
+            if leftX >= rightX then break end
+
+            local alpha = logAlphas[i - 1] or 20
+            draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
+            draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
+
+            prevValue = nextValue
+        end
+    end
+
+    -- Single texture shine pass over entire filled area (red + all green)
+    -- Texture is white-only so it never tints fills underneath
+    if fullFillRight > safeX then
+        drawFillGradient(safeX, safeY, fullFillRight, safeH)
+    end
+
+    -- White dividers painted on top of texture
+    if count >= 1 and seg1Right > seg1Left then
+        draw.Color(255, 255, 255, 90)
         draw.FilledRect(seg1Left, safeY + 1, seg1Left + 1, safeY + safeH - 1)
     end
+    if count >= 2 then
+        local maxSegments = math.min(count, 5)
+        local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
+        for i = 2, maxSegments do
+            local nextValue = boundaryValues[i] or 0
+            if nextValue < 0 then nextValue = 0
+            elseif nextValue > safeMax then nextValue = safeMax end
 
-    if count <= 1 then
-        return
-    end
+            local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
+            local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
 
-    -- Segs 2..5: transparent green on dark bg. Green fades to dark (not to orange).
-    local prevValue = math.max(0, math.floor(boundaryValues[1] or 0))
-    local alphas = { 180, 120, 70, 35 }
-    local maxSegments = math.min(count, 5)
+            if leftX >= rightX then break end
 
-    for i = 2, maxSegments do
-        local nextValue = boundaryValues[i] or 0
-        if nextValue < 0 then
-            nextValue = 0
-        elseif nextValue > safeMax then
-            nextValue = safeMax
+            draw.Color(255, 255, 255, 90)
+            draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
+
+            prevValue = nextValue
         end
-
-        local rightX = safeX + math.floor((prevValue / safeMax) * safeW)
-        local leftX  = safeX + math.floor((nextValue / safeMax) * safeW)
-
-        if leftX >= rightX then break end
-
-        local alpha = alphas[i - 1] or 20
-        draw.Color(colors.green[1], colors.green[2], colors.green[3], alpha)
-        draw.FilledRect(leftX, safeY, rightX, safeY + safeH)
-        drawFillGradient(leftX, safeY, rightX, safeH)
-
-        draw.Color(255, 255, 255, 80)
-        draw.FilledRect(leftX, safeY + 1, leftX + 1, safeY + safeH - 1)
-
-        prevValue = nextValue
     end
 end
 
